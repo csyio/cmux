@@ -181,6 +181,20 @@ import WebKit
         #expect(host.accessibilityIdentifier() == "cmux.page.cmux.history")
     }
 
+    @Test func everyHostSharesTheAppsOneProcessPoolButNotItsDataStore() throws {
+        PageID.registerBundledRoot(PageShellFixture.webviewsApp, for: PageDescriptor.shell.id)
+        let first = try #require(PageWebView(pooledHost: .shell))
+        let second = try #require(PageWebView(pooledHost: .shell))
+        let page = PageDescriptor(id: "com.example.app", resource: "x", namespaces: ["com.example.app."])
+        let plain = try #require(PageWebView(descriptor: page, root: try Self.root(), routes: []))
+        defer { first.close(); second.close(); plain.close() }
+        let pools = [first, second, plain].map { $0.webKitView.configuration.processPool }
+        #expect(pools.allSatisfy { $0 === PageProcessPool.shared })
+        let stores = [first, second].map { $0.webKitView.configuration.websiteDataStore }
+        #expect(stores[0] !== stores[1])
+        #expect(!stores[0].isPersistent && !stores[1].isPersistent)
+    }
+
     @Test func onlyAPooledHostCanBeRetargeted() throws {
         let page = PageDescriptor(id: "com.example.app", resource: "x", namespaces: ["com.example.app."])
         let view = try #require(PageWebView(descriptor: page, root: try Self.root(), routes: []))
