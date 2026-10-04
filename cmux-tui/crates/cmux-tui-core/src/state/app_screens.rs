@@ -280,7 +280,10 @@ impl Mux {
                     && matches!(panes.as_slice(), [pane] if app_surface.is_some_and(|surface| {
                         state.panes.get(pane).is_some_and(|pane| pane.tabs == [surface])
                     }));
-                anyhow::ensure!(shaped, "the app screen does not have its shape");
+                if !shaped {
+                    // A1 does not hold (a racing effect changed the screen).
+                    return Err(crate::state::app_rules::shape_rule(state, screen));
+                }
                 // No undo entry from before the kind may restore another shape.
                 target.invalidate_layout_undo();
                 projected.resource_indexes.screen_apps.insert(screen, screen_app.clone());
