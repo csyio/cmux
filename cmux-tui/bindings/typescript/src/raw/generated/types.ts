@@ -1,5 +1,5 @@
 /* This file is generated. Do not edit by hand. */
-/* cmux-tui mux protocol 12, IR 3d68350e643abae41960f97711e728cf3681b9fc60044ae1fc478ec89addd2a4. */
+/* cmux-tui mux protocol 12, IR 886365f7bb8d95c268b83ebe16e1378209428b31734d021105e1f413c1fd5842. */
 
 
 /** JSON accepted by the wire codec. bigint is serialized as an exact JSON integer. */
@@ -533,6 +533,8 @@ export type NotifyResult = {
 export type Pane = (LivePane) | (DeadPane);
 
 export type PaneDirection = "left" | "right" | "up" | "down";
+
+export type PaneKind = "pty" | "browser";
 
 export type PaneNeighborResult = {
   "pane": (Id) | null;
