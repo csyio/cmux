@@ -87,9 +87,12 @@ try:
         totals = []
         for line in open(spans_path):
             trace = json.loads(line)
-            if trace.get("label") != "new-tab":
+            if trace.get("label") not in ("new-tab", "host"):
                 continue
-            totals.append(trace["total_us"] / 1000)
+            if trace["label"] == "host":
+                trace["marks"] = [["host-process " + name, at] for name, at in trace["marks"]]
+            if trace["label"] == "new-tab":
+                totals.append(trace["total_us"] / 1000)
             last = 0
             for name, at in trace["marks"]:
                 key = name.split(" ")[0] + (" " + name.split(" ")[1] if name.startswith("lock.wait") else "")
