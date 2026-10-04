@@ -31,6 +31,7 @@ extension SettingsSchema {
         "palette.scopes.settings.prefix",
         "palette.scopes.scopes.prefix",
         "tasks.layout",
+        "picker.pinned",
         "layout.defaultColumnWidth",
         "layout.centerFocusedColumn",
         "layout.stripScrollbar",
