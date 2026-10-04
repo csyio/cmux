@@ -1174,6 +1174,7 @@ dependencies = [
  "jsonschema",
  "libc",
  "proptest",
+ "quick-xml",
  "regex",
  "reqwest",
  "rusqlite",
