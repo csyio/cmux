@@ -77,7 +77,8 @@ public nonisolated struct AcpmuxSessionCensus: Sendable, Equatable {
 
 /// The local acpmux daemon at quit: one census when the dialog opens, and
 /// ending its agents for Quit Everything.
-public nonisolated enum AcpmuxQuit {
+public nonisolated struct AcpmuxQuit {
+    public nonisolated init() {}
     /// Nil when acpmux has a socket but did not answer within `deadline`
     /// (unknown, not zero). No daemon (no socket, nothing listening) is zero.
     @concurrent public static func census(_ environment: AcpmuxEnvironment?, deadline: Duration = .seconds(1)) async -> AcpmuxSessionCensus? {
