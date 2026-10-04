@@ -25,6 +25,10 @@ pub(super) struct MoveTabToColumnParams {
     width: Option<f32>,
     #[serde(default)]
     dock: Option<crate::model::ColumnDock>,
+    /// The pre-R87 name of `dock`, refused so an older client's pin never
+    /// silently becomes a plain column.
+    #[serde(default)]
+    sticky: Option<Value>,
     #[serde(default)]
     respawn: Option<SplitRespawnRequest>,
     #[serde(default)]
@@ -42,9 +46,17 @@ pub(super) fn move_tab_to_column(
         after_column,
         width,
         dock,
+        sticky,
         respawn,
         transaction,
     } = params;
+    if sticky.is_some() {
+        return Err(crate::ColumnDockError::InvalidArgument {
+            field: "sticky",
+            value: "sticky".to_string(),
+        }
+        .into());
+    }
     validate_client_transaction(transaction.as_deref())?;
     get_surface(mux, surface)?;
     let anchor = column_anchor(mux, pane, screen)?;
