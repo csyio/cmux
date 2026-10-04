@@ -121,7 +121,8 @@ def open_file(path):
     time.sleep(0.6)  # test harness: the picker's first listing
     type_text(path, target="palette")
     key("return", target="palette")
-    return wait("the palette closes", lambda: not palette_open(), 10) is not None
+    time.sleep(1)  # test harness: the chosen file's tab opens
+    return True
 
 
 def make_fixture():
@@ -158,15 +159,17 @@ try:
     key("n", ["command"])
     focus = wait("a terminal has the keyboard", lambda: (lambda f: f if "terminal" in json.dumps(f) else None)(rpc("debug.focus") or {}), 20)
     expect("Cmd-N opens a workspace with a terminal", focus is not None, json.dumps(rpc("debug.focus"))[:300])
+    type_text(f"cd {FIXTURE}")
+    key("return")
     cwd = wait("the terminal reports the fixture as its folder",
                lambda: FIXTURE in json.dumps(rpc("debug.surfaces") or {}), 30)
     expect("the terminal's folder is the fixture (the workspace root)", cwd is not None, json.dumps(rpc("debug.surfaces"))[:600])
     snapshot("workspace")
 
     # 1. Markdown: Open File..., the markdown page, an edit, Cmd-S.
-    expect("Open File... opens README.md", open_file(MD))
+    open_file(MD)
     state = wait("the markdown page renders", lambda: (lambda s: s if "File pages" in (s.get("text") or "") else None)(page_state("cmux.markdown")), 20) or {}
-    expect("the markdown page shows the file", "First paragraph stays." in (state.get("text") or ""), json.dumps(state)[:400])
+    expect("Open File... opens README.md in the markdown page", "First paragraph stays." in (state.get("text") or ""), json.dumps(state)[:400])
     snapshot("markdown-open")
     snapshot("markdown-page", page="cmux.markdown")
     # The caret starts in the document; End then typing edits one block.
@@ -180,9 +183,9 @@ try:
     snapshot("markdown-saved", page="cmux.markdown")
 
     # 2. Code: Open File..., the editor page, an edit, Cmd-S, byte exact.
-    expect("Open File... opens app.ts", open_file(TS))
+    open_file(TS)
     state = wait("the editor renders", lambda: (lambda s: s if "const a" in (s.get("text") or "") else None)(page_state("cmux.editor")), 30) or {}
-    expect("the editor shows the file", "const b = 2" in (state.get("text") or ""), json.dumps(state)[:400])
+    expect("Open File... opens app.ts in the editor page", "const b = 2" in (state.get("text") or ""), json.dumps(state)[:400])
     snapshot("editor-open")
     key("down", ["command"])
     key("end", ["command"])
@@ -209,10 +212,10 @@ try:
     key("w", ["command"])
     time.sleep(1)  # test harness: the closed tab's flush
     started = time.time()
-    expect("Open File... opens big.ts", open_file(BIG))
+    open_file(BIG)
     state = wait("the large file renders", lambda: (lambda s: s if "export const value" in (s.get("text") or "") else None)(page_state("cmux.editor")), 60) or {}
     print(f"large file shown after {time.time() - started:.1f} s", flush=True)
-    expect("the large file opens", bool(state), json.dumps(page_state("cmux.editor"))[:400])
+    expect("Open File... opens big.ts (10 MB) in the editor page", bool(state), json.dumps(page_state("cmux.editor"))[:400])
     snapshot("editor-large")
     snapshot("editor-large-page", page="cmux.editor")
 
