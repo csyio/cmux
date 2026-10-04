@@ -1,10 +1,10 @@
 /* This file is generated. Do not edit by hand. */
-/* cmux-tui mux protocol 12, IR 9efd2cbaa76a17aedfcce9ddb6d2642121da1e3e3a3fb3409f4568b04d63b3ee. */
+/* cmux-tui mux protocol 12, IR 081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd. */
 
 
 export const SDK_SCHEMA_VERSION = 2 as const;
 export const MUX_PROTOCOL_VERSION = 12 as const;
-export const SDK_IR_SHA256 = "9efd2cbaa76a17aedfcce9ddb6d2642121da1e3e3a3fb3409f4568b04d63b3ee" as const;
+export const SDK_IR_SHA256 = "081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd" as const;
 export const PROTOCOL = {
   "id_type": "uint64",
   "javascript_id_policy": "All protocol identifiers are uint64 JSON numbers. JavaScript and TypeScript SDKs must decode them losslessly as bigint (or validated decimal strings at their public boundary), and must not expose IEEE-754 number ids. Pairing request ids, revisions, timestamps, frame sequences, and reservation ids follow the same rule.",
@@ -1308,7 +1308,7 @@ export const COMMAND_METADATA = {
     "fields": {},
     "stream": null,
     "constraints": [
-      "app is a manifest app id (publisher/name: ASCII letters, digits, ., _, - or /); route has no control characters. pane and workspace are exclusive (workspace: its active pane, or its first pane when empty). A retry with the same idempotency_key returns the first tab with replayed:true. In an app screen or an app column it is refused (error_code app-screen-fixed or app-column-locked). See spec/commands.md for the result object."
+      "app is a manifest app id (publisher/name: ASCII letters, digits, ., _, - or /); route has no control characters. pane and workspace are exclusive (workspace: its active pane, or its first pane when empty). A retry with the same idempotency_key returns the first tab with replayed:true. In an app screen it is refused (error_code app-screen-fixed). See spec/commands.md for the result object."
     ]
   },
   "new-browser-tab": {
@@ -7306,8 +7306,7 @@ export const TYPE_SCHEMAS: Readonly<Record<string, TypeSchema>> = {
         "type": {
           "kind": "enum",
           "values": [
-            "app",
-            "appColumn"
+            "app"
           ]
         }
       },

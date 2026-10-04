@@ -4,8 +4,7 @@ package com.cmux.raw;
 import java.util.Objects;
 
 public enum ScreenKind implements WireEnum {
-    APP("app"),
-    APP_COLUMN("appColumn");
+    APP("app");
 
     private final Object wireValue;
 

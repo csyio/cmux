@@ -1,5 +1,5 @@
 //! The v2 operations of `workspace-kind-v1` and `app-screens-v1`:
-//! `workspace.ensure_home {screen?, app?}`, `workspace.ensure_app {app, kind}`
+//! `workspace.ensure_home {app?}`, `workspace.ensure_app {app, kind}`
 //! and `tab.create_app {app, route?}` (plans/cmux-next/app-screens.md).
 
 use std::sync::Arc;
@@ -36,18 +36,10 @@ pub(super) fn dispatch(mux: &Arc<Mux>, request: &ParsedResourceRequest) -> anyho
     match request.envelope.operation {
         ResourceOperation::WorkspaceEnsureHome => {
             let home = mux.state_ensure_home()?;
-            // An `app-screens-v1` app asks for the Home app column.
-            if let Some(screen) = string(request, "screen") {
-                anyhow::ensure!(
-                    AppScreenKind::parse(&screen)? == AppScreenKind::AppColumn,
-                    "bad request: the home screen is appColumn"
-                );
-                mux.state_migrate_home(&home.workspace_id, &required(request, "app")?)?;
-            } else {
-                anyhow::ensure!(
-                    !request.fields.contains_key("app"),
-                    "bad request: app needs screen"
-                );
+            // An `app-screens-v1` app makes the home workspace the app
+            // workspace of its Home app (state/app_home.rs).
+            if let Some(app) = string(request, "app") {
+                mux.state_migrate_home(&home.workspace_id, &app)?;
             }
             let revision = mux.with_state(|state| state.resource_revision);
             mutation_result(

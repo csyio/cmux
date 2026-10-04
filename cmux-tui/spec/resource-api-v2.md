@@ -132,41 +132,25 @@ position or into a group, or puts another workspace before it, refuses with
 `home.pinned_first` (raw `home_pinned_first`). `workspace.create` never
 accepts `kind`, so TUI and CLI sessions never have a home workspace.
 
-`app-screens-v1` (plans/cmux-next/app-screens.md). A screen has a kind:
-`workspace` (an ordinary screen), `app` (one app fills the screen) or
-`appColumn` (the app column at index 0, the whole screen while it has no other
-column, and ordinary columns to its right). `workspace.ensure_app {app, kind}`
-makes one workspace of kind `app` per app, holding one screen of that kind with
-one app tab, and replays it after that; its result value is
-`{workspace_id, screen_id}`. `workspace.ensure_home {screen: "appColumn", app}`
-turns the home workspace's first screen into `appColumn`: the app column is
-inserted at index 0, pinned left (docked), and every existing pane stays to its
-right; a migrated screen is left as it is. Snapshots and upserts carry
-`extra.kind` (`app`) and `extra.app` on an app workspace, `extra.kind` (`app`
-or `appColumn`) and `extra.app` on an app screen (omitted for an ordinary
-screen), and `content_kind: "app"` with `extra.app` and `extra.route` on an app
-tab. `tab.create_app {app, route?}` places an app tab like `tab.create_browser`;
-in an ordinary screen it is an ordinary tab. An app screen refuses every
-operation that adds, splits, moves, pins or closes inside it
-(`tab.create_*`, `pane.create`, `pane.split`, `pane.run`, `tab.move` into or out
-of it, `pane.swap`, `column.update`, `workspace.layout.apply`, `tab.close` and
-`pane.close` of its tab) with `app.screen_fixed` (raw `error_code`
-`app-screen-fixed`); `screen.close` closes it. The app column refuses the same
-operations with `app.column_locked` (raw `app-column-locked`) and keeps only
-its width; `pane.split {direction: "right", viewport_width}` from it adds an
-ordinary column to its right, and pinning another column left is refused. The
-error details name the screen (`screen_id`). A workspace of kind `app` keeps
-exactly its one app screen (`screen.create` into it and `screen.move` across
-it refuse), tab-group moves and `screen.layout.undo` follow the same rules,
-and the store checks them again on the rows of every commit, in its
-transaction. A new tab sent to a workspace or screen (not to a pane) whose
-focused pane is the app column goes to the first ordinary column, or into a
-new ordinary column right of the app column; it is never refused.
-`tab.create_app` takes `expected_revision` like `tab.create_browser`. The
-app column is stored pinned left and docked and never counts as a scrolling
-column. A closed app workspace that `closed.reopen` brings back loads as an
-ordinary screen with its app tab; the next `workspace.ensure_app` restores its
-kind. A refused operation changes nothing. A connection without `app-screens-v1` reads an app tab's
+`app-screens-v1` (plans/cmux-next/app-screens.md, app-only model). A screen
+has a kind: `workspace` (an ordinary screen) or `app`. An app workspace holds
+exactly one app screen with one app tab; there is one per app per store.
+`workspace.ensure_app {app, kind: "app"}` makes it once and replays it after
+that; its result value is `{workspace_id, screen_id}`. `workspace.ensure_home
+{app}` makes the home workspace the app workspace of the Home app; screens it
+held before move, with no tab lost, into its companion ordinary workspace,
+placed directly after it. Snapshots and upserts carry `extra.kind` (`app`)
+and `extra.app` on an app workspace and an app screen, and `content_kind:
+"app"` with `extra.app` and `extra.route` on an app tab. `tab.create_app {app,
+route?, expected_revision?}` places an app tab like `tab.create_browser`; in an
+ordinary screen it is an ordinary tab. An app screen refuses every operation
+that adds, splits, moves, pins, replaces or closes inside it, and an app
+workspace refuses a second screen, with `app.screen_fixed` (raw `error_code`
+`app-screen-fixed`, details `screen_id`); `workspace.close` and `screen.close`
+close the app with its workspace. A new tab sent to an app workspace (not to a
+pane) goes to its companion workspace, which is created when missing. The
+store checks the rules again on the rows of every commit, in its transaction.
+A refused operation changes nothing. A connection without `app-screens-v1` reads an app tab's
 `content_kind` as `browser`.
 `closed.reopen` and `saved_tab_group.reopen` compose several creations; the request's key records the whole result, so a retry replays it.
 

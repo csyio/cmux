@@ -1,7 +1,9 @@
 //! `app-screens-v1` rules on the remaining paths: the authoritative check
 //! in the commit, tab-group moves, screen moves, new screens in an app
-//! workspace, layout undo, `tab.create_app`'s revision precondition, and
-//! new tabs sent to a home whose focused pane is the app column.
+//! workspace, layout undo, `tab.create_app`'s revision precondition, new
+//! tabs sent to an app workspace (its companion workspace), interrupted
+//! creations, restart after a refusal, and an ordinary workspace whose only
+//! tab is an app tab.
 
 use super::*;
 use crate::resource_mutation::ResourceMutationPlan;
@@ -137,51 +139,6 @@ fn app_workspace_keeps_exactly_its_app_screen() {
     wire.mux.shutdown();
 }
 
-/// Layout undo never restores a shape that breaks A1/A2: undoing a new
-/// column right of the app column is allowed, an undo entry whose layout
-/// has another app column is refused, and an app screen has nothing to undo.
-#[test]
-fn layout_undo_keeps_the_app_column() {
-    let mut wire = Wire::new();
-    let created = wire.ensure_app(HOME, "appColumn", "open-home");
-    let screen_id = created["value"]["screen_id"].as_str().unwrap().to_string();
-    let (app, app_pane) = app_tab(&wire.screen(&screen_id));
-    wire.ok(json!({"cmd": "new-pane-right", "pane": app_pane, "width": 0.5}));
-    let preview = wire.ok(json!({"cmd": "undo-layout", "pane": app_pane}));
-    assert_eq!(preview["confirmation_required"], true, "{preview}");
-    wire.ok(json!({"cmd": "undo-layout", "pane": app_pane, "confirm_close": true,
-                   "revision": preview["revision"]}));
-    let raw = wire.screen(&screen_id);
-    assert_eq!(raw["kind"], "appColumn", "{raw}");
-    assert_eq!(app_tab(&raw).0, app, "undo kept the lone app column");
-
-    let right = wire.ok(json!({"cmd": "new-pane-right", "pane": app_pane, "width": 0.5}));
-    let ordinary = wire.pane_of(right["surface"].as_u64().unwrap());
-    {
-        let mut state = wire.mux.state.lock().unwrap();
-        let (w, s) = state.screen_of(app_pane).unwrap();
-        let entry = state.workspaces[w].screens[s].layout_undo.back_mut().unwrap();
-        entry.before.layout_columns.clear();
-        entry.before.root = Node::Leaf(ordinary);
-    }
-    let before = layout_fingerprint(&wire.tree());
-    let preview = wire.ok(json!({"cmd": "undo-layout", "pane": app_pane}));
-    wire.refused(
-        json!({"cmd": "undo-layout", "pane": app_pane, "confirm_close": true,
-               "revision": preview["revision"]}),
-        "app-column-locked",
-    );
-    assert_eq!(layout_fingerprint(&wire.tree()), before);
-
-    let store = wire.ensure_app(STORE, "app", "open-store");
-    let (_, store_pane) = app_tab(&wire.screen(store["value"]["screen_id"].as_str().unwrap()));
-    let before = layout_fingerprint(&wire.tree());
-    let response = wire.send(json!({"cmd": "undo-layout", "pane": store_pane}));
-    assert_eq!(response["ok"], false, "{response}");
-    assert_eq!(layout_fingerprint(&wire.tree()), before);
-    wire.mux.shutdown();
-}
-
 /// `tab.create_app` honors `expected_revision` like `tab.create_browser`.
 #[test]
 fn tab_create_app_honors_expected_revision() {
@@ -196,55 +153,6 @@ fn tab_create_app_honors_expected_revision() {
         json!({"pane": public_pane, "app": STORE, "expected_revision": revision.to_string()});
     let created = wire.v2_ok("tab.create_app", current, Some("create-current"));
     assert_eq!(created["value"]["kind"], "app", "{created}");
-    wire.mux.shutdown();
-}
-
-/// Decision 2026-10-04: a new tab sent to a home whose focused pane is the
-/// app column goes to the first ordinary column, or into a new ordinary
-/// column right of the app column when there is none. It is never refused.
-#[test]
-fn new_tabs_sent_to_the_home_land_in_an_ordinary_column() {
-    let mut wire = Wire::new();
-    let migrate = json!({"screen": "appColumn", "app": HOME});
-    let home = wire.v2_ok("workspace.ensure_home", migrate, Some("connect"));
-    let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
-    let home_slot = wire.workspace_slot(&home_id);
-    let home_screen = |wire: &mut Wire| {
-        let tree = wire.tree();
-        let workspace = tree["workspaces"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|item| item["resource_id"] == home_id.as_str())
-            .cloned()
-            .unwrap();
-        workspace["screens"][0].clone()
-    };
-    let (app, app_pane) = app_tab(&home_screen(&mut wire));
-    let mut created = Vec::new();
-    for (index, conversation) in ["conv_01X", "conv_01Y"].into_iter().enumerate() {
-        let tab = wire.ok(json!({"cmd": "new-conversation-tab", "workspace": home_slot,
-                                "conversation": conversation, "owner": "local",
-                                "origin": "route-test", "mutation_id": format!("r{index}")}));
-        created.push(tab["surface"].as_u64().unwrap());
-    }
-    let browser = wire.v2_ok(
-        "tab.create_browser",
-        json!({"workspace": home_id, "url": "https://example.com"}),
-        Some("route-browser"),
-    );
-    assert_eq!(browser["value"]["kind"], "browser", "{browser}");
-    let screen = home_screen(&mut wire);
-    let columns = screen["columns"].as_array().cloned().unwrap_or_default();
-    assert_eq!(columns.len(), 2, "one new ordinary column right of the app column: {screen}");
-    assert_eq!(columns[0]["app"], HOME);
-    assert_eq!(layout_panes(&columns[0]["layout"]), vec![app_pane]);
-    assert_eq!(wire.pane_of(app), app_pane);
-    let ordinary = layout_panes(&columns[1]["layout"]);
-    for surface in &created {
-        assert!(ordinary.contains(&wire.pane_of(*surface)), "{surface} is not in column 1");
-    }
-    assert_eq!(tabs(&screen).len(), 4, "{screen}");
     wire.mux.shutdown();
 }
 
@@ -294,10 +202,10 @@ fn ensure_app_resumes_or_replaces_an_interrupted_creation() {
         let (w, s) = state.screen_of(state.pane_of(surface).unwrap()).unwrap();
         state.workspaces[w].screens[s].public_id.to_string()
     });
-    let resumed = wire.ensure_app(HOME, "appColumn", "resume-2");
+    let resumed = wire.ensure_app(HOME, "app", "resume-2");
     assert_eq!(resumed["value"]["workspace_id"], second.as_str(), "{resumed}");
     assert_eq!(resumed["value"]["screen_id"], screen.as_str(), "{resumed}");
-    assert_eq!(wire.screen(&screen)["kind"], "appColumn");
+    assert_eq!(wire.screen(&screen)["kind"], "app");
 
     // The screen changed between the commits: a second tab joined the app
     // pane. The old workspace stays ordinary with both tabs; the app gets a
@@ -325,85 +233,6 @@ fn ensure_app_resumes_or_replaces_an_interrupted_creation() {
     wire.mux.shutdown();
 }
 
-/// The Home migration resumes after a stop between its app tab commit and
-/// its kind commit, reusing that app tab.
-#[test]
-fn home_migration_resumes_after_an_interrupted_step() {
-    use crate::state::app_screens::AppTabTarget;
-    let mut wire = Wire::new();
-    let home = wire.v2_ok("workspace.ensure_home", json!({}), Some("connect-1"));
-    let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
-    let home_slot = wire.workspace_slot(&home_id);
-    let conversation = wire.ok(json!({"cmd": "new-conversation-tab", "workspace": home_slot,
-                                     "conversation": "conv_01R", "owner": "local",
-                                     "origin": "resume-test", "mutation_id": "c"}));
-    let pane = wire.pane_of(conversation["surface"].as_u64().unwrap());
-    let tab = wire.mux.new_app_tab(AppTabTarget::Pane(Some(pane)), app_record(HOME), None, None);
-    let app = tab.unwrap().surface.id;
-    let migrate = json!({"screen": "appColumn", "app": HOME});
-    wire.v2_ok("workspace.ensure_home", migrate, Some("connect-2"));
-    let screen = wire.mux.with_state(|state| {
-        let (w, s) = state.screen_of(state.pane_of(app).unwrap()).unwrap();
-        state.workspaces[w].screens[s].public_id.to_string()
-    });
-    let raw = wire.screen(&screen);
-    assert_eq!(raw["kind"], "appColumn", "{raw}");
-    assert_eq!(tabs(&raw).iter().filter(|tab| tab["kind"] == "app").count(), 1, "{raw}");
-    assert_eq!(tabs(&raw).len(), 2, "{raw}");
-    wire.assert_stored_app_column(&screen, 2);
-    wire.mux.shutdown();
-}
-
-/// A new tab sent to the home screen (a screen target, not a pane) whose
-/// focused pane is the lone app column gets a new ordinary column.
-#[test]
-fn new_tab_sent_to_the_home_screen_lands_in_an_ordinary_column() {
-    let mut wire = Wire::new();
-    let migrate = json!({"screen": "appColumn", "app": HOME});
-    let home = wire.v2_ok("workspace.ensure_home", migrate, Some("connect"));
-    let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
-    let screen = wire.mux.with_state(|state| {
-        let workspace = state.workspaces.iter().find(|w| w.public_id.as_str() == home_id);
-        workspace.unwrap().screens[0].public_id.to_string()
-    });
-    wire.v2_ok(
-        "tab.create_browser",
-        json!({"workspace": home_id, "screen": screen, "url": "https://example.com"}),
-        Some("screen-target"),
-    );
-    let raw = wire.screen(&screen);
-    assert_eq!(raw["columns"].as_array().map(Vec::len), Some(2), "{raw}");
-    wire.assert_stored_app_column(&screen, 2);
-    wire.mux.shutdown();
-}
-
-/// v2 `pane.swap` and `workspace.layout.apply` refuse the app column.
-#[test]
-fn v2_swap_and_layout_apply_refuse_the_app_column() {
-    let mut wire = Wire::new();
-    let created = wire.ensure_app(HOME, "appColumn", "open-home");
-    let screen = created["value"]["screen_id"].as_str().unwrap().to_string();
-    let workspace = created["value"]["workspace_id"].as_str().unwrap().to_string();
-    let (_, app_pane) = app_tab(&wire.screen(&screen));
-    let right = wire.ok(json!({"cmd": "new-pane-right", "pane": app_pane, "width": 0.5}));
-    let ordinary = wire.pane_of(right["surface"].as_u64().unwrap());
-    let before = layout_fingerprint(&wire.tree());
-    let swap = json!({"workspace": workspace, "screen": screen,
-                      "pane": wire.public_pane(app_pane), "other_workspace": workspace,
-                      "other_screen": screen, "other_pane": wire.public_pane(ordinary)});
-    wire.v2_refused("pane.swap", swap, "swap-app-column", "app.column_locked");
-    let layout = wire.v2_ok(
-        "screen.layout.export",
-        json!({"workspace": workspace,
-                                                           "screen": screen}),
-        None,
-    );
-    let apply = json!({"workspace": workspace, "layout": layout});
-    wire.v2_refused("workspace.layout.apply", apply, "apply-app-column", "app.column_locked");
-    assert_eq!(layout_fingerprint(&wire.tree()), before);
-    wire.mux.shutdown();
-}
-
 /// A refused op leaves the store as it was: after a restart the app screen
 /// still has its one app tab.
 #[test]
@@ -423,5 +252,175 @@ fn a_refused_op_survives_a_restart_unchanged() {
     assert_eq!(raw["kind"], "app", "{raw}");
     let (app, _) = app_tab(&raw);
     assert_eq!(wire.public_tab(app), before);
+    wire.mux.shutdown();
+}
+
+/// Layout undo has nothing to restore on an app screen, and changes
+/// nothing there.
+#[test]
+fn layout_undo_leaves_the_app_screen_as_it_is() {
+    let mut wire = Wire::new();
+    let store = wire.ensure_app(STORE, "app", "open-store");
+    let (_, pane) = app_tab(&wire.screen(store["value"]["screen_id"].as_str().unwrap()));
+    let before = layout_fingerprint(&wire.tree());
+    let response = wire.send(json!({"cmd": "undo-layout", "pane": pane}));
+    assert_eq!(response["ok"], false, "{response}");
+    assert_eq!(layout_fingerprint(&wire.tree()), before);
+    wire.mux.shutdown();
+}
+
+/// The companion workspace of `app_workspace` (public id), from the store.
+fn companion_of(wire: &Wire, app_workspace: &str) -> Option<String> {
+    wire.mux
+        .read_registry_state(|connection| {
+            crate::state::app_screens_store::live_companion(connection, app_workspace)
+        })
+        .unwrap()
+}
+
+/// A new tab sent to an app workspace (workspace or screen target, not a
+/// pane) is not refused: it goes to the app workspace's companion ordinary
+/// workspace, created directly after it once. A pane inside the app screen
+/// stays refused.
+#[test]
+fn new_tabs_sent_to_an_app_workspace_go_to_its_companion() {
+    let mut wire = Wire::new();
+    let home = wire.v2_ok("workspace.ensure_home", json!({"app": HOME}), Some("connect"));
+    let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
+    let home_slot = wire.workspace_slot(&home_id);
+    let screen = wire.mux.with_state(|state| {
+        let workspace = state.workspace_by_id(home_slot).unwrap();
+        workspace.screens[0].public_id.to_string()
+    });
+    let (app, app_pane) = app_tab(&wire.screen(&screen));
+    assert!(companion_of(&wire, &home_id).is_none());
+    let conversation = wire.ok(json!({"cmd": "new-conversation-tab", "workspace": home_slot,
+                                     "conversation": "conv_01X", "owner": "local",
+                                     "origin": "route-test", "mutation_id": "r0"}));
+    let companion = companion_of(&wire, &home_id).expect("the companion was created");
+    let workspace_of = |wire: &Wire, surface: SurfaceId| {
+        wire.mux.with_state(|state| {
+            let (w, _) = state.screen_of(state.pane_of(surface).unwrap()).unwrap();
+            state.workspaces[w].public_id.to_string()
+        })
+    };
+    assert_eq!(workspace_of(&wire, conversation["surface"].as_u64().unwrap()), companion);
+    let browser = wire.v2_ok(
+        "tab.create_browser",
+        json!({"workspace": home_id, "screen": screen, "url": "https://example.com"}),
+        Some("screen-target"),
+    );
+    assert_eq!(browser["value"]["workspace_id"], companion.as_str(), "{browser}");
+    let app_tab_created =
+        wire.ok(json!({"cmd": "new-app-tab", "workspace": home_slot, "app": STORE}));
+    assert_eq!(workspace_of(&wire, app_tab_created["surface"].as_u64().unwrap()), companion);
+    assert_eq!(companion_of(&wire, &home_id), Some(companion.clone()), "one companion");
+    let order = wire.v2_ok("workspace.placement.list", json!({}), None);
+    assert_eq!(order[1]["workspace"]["workspace_id"], companion.as_str(), "{order}");
+    // The app screen is unchanged; a pane target inside it is refused.
+    assert_eq!(app_tab(&wire.screen(&screen)), (app, app_pane));
+    wire.refused(json!({"cmd": "new-tab", "pane": app_pane}), "app-screen-fixed");
+    wire.v2_refused(
+        "tab.create_terminal",
+        json!({"workspace": home_id, "screen": screen, "pane": wire.public_pane(app_pane)}),
+        "pane-target",
+        "app.screen_fixed",
+    );
+    wire.mux.shutdown();
+}
+
+/// The Home migration resumes after a stop between its steps: after the
+/// screens moved into the companion, and after the app tab commit.
+#[test]
+fn home_migration_resumes_after_an_interrupted_step() {
+    use crate::state::app_screens::AppTabTarget;
+    let mut wire = Wire::new();
+    let home = wire.v2_ok("workspace.ensure_home", json!({}), Some("connect-1"));
+    let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
+    let home_slot = wire.workspace_slot(&home_id);
+    // Stopped after the app tab commit: the home is one screen with only
+    // the Home app tab, without its kind row.
+    let tab =
+        wire.mux.new_app_tab(AppTabTarget::Workspace(home_slot), app_record(HOME), None, None);
+    let app = tab.unwrap().surface.id;
+    wire.v2_ok("workspace.ensure_home", json!({"app": HOME}), Some("connect-2"));
+    let screen = wire.mux.with_state(|state| {
+        let (w, s) = state.screen_of(state.pane_of(app).unwrap()).unwrap();
+        state.workspaces[w].screens[s].public_id.to_string()
+    });
+    let raw = wire.screen(&screen);
+    assert_eq!(raw["kind"], "app", "{raw}");
+    assert_eq!(app_tab(&raw).0, app, "the interrupted app tab is reused");
+    assert!(companion_of(&wire, &home_id).is_none(), "nothing needed a companion");
+    wire.mux.shutdown();
+}
+
+/// v2 `pane.swap` and `workspace.layout.apply` refuse the app screen.
+#[test]
+fn v2_swap_and_layout_apply_refuse_the_app_screen() {
+    let mut wire = Wire::new();
+    let (_, terminal_pane) = wire.terminal_pane();
+    let created = wire.ensure_app(STORE, "app", "open-store");
+    let screen = created["value"]["screen_id"].as_str().unwrap().to_string();
+    let workspace = created["value"]["workspace_id"].as_str().unwrap().to_string();
+    let (_, app_pane) = app_tab(&wire.screen(&screen));
+    let before = layout_fingerprint(&wire.tree());
+    let other = wire.destination(terminal_pane);
+    let swap = json!({"workspace": workspace, "screen": screen,
+                      "pane": wire.public_pane(app_pane),
+                      "other_workspace": other["destination_workspace"],
+                      "other_screen": other["destination_screen"],
+                      "other_pane": other["destination_pane"]});
+    wire.v2_refused("pane.swap", swap, "swap-app", "app.screen_fixed");
+    let layout =
+        wire.v2_ok("screen.layout.export", json!({"workspace": workspace, "screen": screen}), None);
+    let apply = json!({"workspace": workspace, "layout": layout});
+    wire.v2_refused("workspace.layout.apply", apply, "apply-app", "app.screen_fixed");
+    assert_eq!(layout_fingerprint(&wire.tree()), before);
+    wire.mux.shutdown();
+}
+
+/// R91: an ordinary workspace whose only tab is an app tab (a first-party
+/// page with its client state in `route`, up to 4 KiB) is valid, and the
+/// tab and its route survive a restart.
+#[test]
+fn ordinary_workspace_with_only_an_app_tab_survives_a_restart() {
+    let store = Store::new("only-app-tab");
+    let mut wire = store.open();
+    let created = wire.v2_ok(
+        "workspace.create",
+        json!({"name": "New Tab", "initial_content": "empty"}),
+        Some("new-tab-workspace"),
+    );
+    let workspace = created["value"]["workspace_id"].as_str().unwrap().to_string();
+    let route = "s".repeat(4096);
+    let tab = wire.v2_ok(
+        "tab.create_app",
+        json!({"workspace": workspace, "app": "cmux.agent", "route": route}),
+        Some("agent-page"),
+    );
+    let tab_id = tab["value"]["tab_id"].as_str().unwrap().to_string();
+    let too_long = json!({"workspace": workspace, "app": "cmux.agent", "route": "s".repeat(4097)});
+    let refused = wire.v2("tab.create_app", too_long, Some("agent-page-long"));
+    assert_eq!(refused["ok"], false, "{refused}");
+    wire.mux.shutdown();
+    drop(wire);
+
+    let mut wire = store.open();
+    let tree = wire.tree();
+    let workspace = tree["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["resource_id"] == workspace.as_str())
+        .cloned()
+        .expect("the workspace with only an app tab is kept");
+    assert_eq!(workspace["kind"], "normal", "{workspace}");
+    let tabs = tabs(&workspace["screens"][0]);
+    assert_eq!(tabs.len(), 1, "{workspace}");
+    assert_eq!(tabs[0]["tab_resource_id"], tab_id.as_str());
+    assert_eq!(tabs[0]["kind"], "app");
+    assert_eq!(tabs[0]["app"], "cmux.agent");
+    assert_eq!(tabs[0]["route"].as_str().map(str::len), Some(4096));
     wire.mux.shutdown();
 }

@@ -1367,7 +1367,7 @@
     },
     {
       "path": "Protocol.java",
-      "sha256": "cdbd916f27f93f305b8091780162abc20b66446eb31d2ebb68c9fe958ca736fb",
+      "sha256": "2d8d16edc7a8270a6f806a5a846cbc4f1fcc68cb7b5a0d6ceba3a29d6685751a",
       "size": 4943
     },
     {
@@ -1657,8 +1657,8 @@
     },
     {
       "path": "ScreenKind.java",
-      "sha256": "8b3909318c858db761d71ea65ec596e68c39e7fd2adc1d6ddd88f42a2cba3181",
-      "size": 875
+      "sha256": "3e708729dbfd0b9bff46191149c4ff504abad72e19ca37635d0a43f36a3c8ad6",
+      "size": 846
     },
     {
       "path": "ScreenRenamedEvent.java",
@@ -2447,7 +2447,7 @@
     }
   ],
   "format": 1,
-  "ir_sha256": "9efd2cbaa76a17aedfcce9ddb6d2642121da1e3e3a3fb3409f4568b04d63b3ee",
+  "ir_sha256": "081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd",
   "language": "java",
   "mux_protocol": 12,
   "schema_version": 2

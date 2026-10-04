@@ -113,8 +113,9 @@ impl Mux {
                         current.layout_columns.iter().position(|candidate| candidate.id == *column)
                     })
                     .ok_or_else(|| invalid("column", "not a viewport column of this screen"))?;
-                if let Some(sticky) = update.sticky {
-                    app_rules::refuse_column(state, current.id, index, sticky)?;
+                if update.sticky.is_some() {
+                    let sticky = cmux_layout_reducer::AppAction::Sticky;
+                    app_rules::refuse_at(state, current.id, sticky)?;
                 }
                 let snapshot = current.layout_snapshot();
                 let changed = reduce_column_update(&snapshot, index, &update)?;

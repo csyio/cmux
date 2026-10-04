@@ -5,15 +5,15 @@
 //!   written in the transaction that creates the workspace.
 //! - `app_tabs`: the app (and route) a frontend-rendered tab shows, written
 //!   in the commit of its frontend browser row, like `conversation_tabs`.
-//! - `resource_screen_kinds`: a screen of kind `app` or `appColumn` and its
-//!   app. It is a resource side table (screen_rows.rs pattern): created with
+//! - `app_companion_workspaces`: the ordinary workspace that takes the new
+//!   tabs sent to an app workspace (placed directly after it).
+//! - `resource_screen_kinds`: a screen of kind `app` and its app. It is a resource side table (screen_rows.rs pattern): created with
 //!   the column docks, deleted when its screen is tombstoned, and overlaid at
 //!   load only when the screen still has its shape ([`load_screen_apps`]); a
 //!   screen that lost it loads as an ordinary screen and keeps every tab.
 //!
-//! The app column of an `appColumn` screen is not stored: it is column 0
-//! (the whole screen while it has no other column), so an older build reads
-//! the screen as an ordinary screen whose first column may be pinned.
+//! An older build reads an app screen as an ordinary screen holding one
+//! frontend browser tab.
 //!
 //! The store never reads app content.
 
@@ -30,7 +30,8 @@ pub(crate) const APP_KIND: &str = "app";
 pub(crate) const APP_TAB_URL: &str = "about:blank";
 pub(crate) const APP_TAB_ENGINE: &str = "webkit";
 const APP_ID_MAX_BYTES: usize = 128;
-const ROUTE_MAX_BYTES: usize = 2048;
+/// The route is also a first-party page's small client state (R91).
+const ROUTE_MAX_BYTES: usize = 4096;
 
 pub(crate) fn create_app_state_schema(transaction: &Transaction<'_>) -> anyhow::Result<()> {
     transaction.execute_batch(
@@ -45,6 +46,10 @@ pub(crate) fn create_app_state_schema(transaction: &Transaction<'_>) -> anyhow::
            origin TEXT,
            mutation_id TEXT
          );
+         CREATE TABLE IF NOT EXISTS app_companion_workspaces (
+           app_workspace_id TEXT PRIMARY KEY NOT NULL,
+           workspace_id TEXT NOT NULL
+         );
          CREATE UNIQUE INDEX IF NOT EXISTS app_tabs_by_mutation
            ON app_tabs(origin, mutation_id) WHERE mutation_id IS NOT NULL;",
     )?;
@@ -56,7 +61,7 @@ pub(crate) fn create_screen_kind_schema(transaction: &Transaction<'_>) -> anyhow
     transaction.execute_batch(
         "CREATE TABLE IF NOT EXISTS resource_screen_kinds (
            screen_id TEXT PRIMARY KEY NOT NULL,
-           kind TEXT NOT NULL CHECK(kind IN ('app', 'appColumn')),
+           kind TEXT NOT NULL CHECK(kind = 'app'),
            app_id TEXT NOT NULL
          );",
     )?;
@@ -77,33 +82,24 @@ pub(crate) fn validate_app_id(app: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The kind of a screen that is not an ordinary (`workspace`) screen.
+/// The kind of a screen that is not an ordinary (`workspace`) screen. v1
+/// has one: `app`, the only screen of its app workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AppScreenKind {
     App,
-    AppColumn,
 }
 
 impl AppScreenKind {
     pub(crate) fn parse(value: &str) -> anyhow::Result<Self> {
         match value {
             "app" => Ok(Self::App),
-            "appColumn" => Ok(Self::AppColumn),
-            _ => anyhow::bail!("bad request: kind must be \"app\" or \"appColumn\""),
+            _ => anyhow::bail!("bad request: kind must be \"app\""),
         }
     }
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::App => "app",
-            Self::AppColumn => "appColumn",
-        }
-    }
-
-    pub(crate) fn reducer(self) -> cmux_layout_reducer::ScreenKind {
-        match self {
-            Self::App => cmux_layout_reducer::ScreenKind::App,
-            Self::AppColumn => cmux_layout_reducer::ScreenKind::AppColumn,
         }
     }
 }
@@ -113,10 +109,6 @@ impl AppScreenKind {
 pub(crate) struct ScreenApp {
     pub(crate) kind: AppScreenKind,
     pub(crate) app: String,
-    /// The screen is the one screen of its app's workspace (kind `app`),
-    /// as `workspace.ensure_app` makes it; the migrated Home screen is not.
-    /// Derived from `app_workspaces`, not stored in the kind row.
-    pub(crate) own_workspace: bool,
 }
 
 /// Write the app workspace row of a new workspace (in its creation commit).
@@ -200,6 +192,37 @@ impl AppPresentation {
 
 /// The screen kinds of the live state, by screen slot.
 pub(crate) type ScreenApps = HashMap<crate::ScreenId, ScreenApp>;
+
+/// The companion ordinary workspace of an app workspace, if it is live.
+pub(crate) fn live_companion(
+    connection: &Connection,
+    app_workspace: &str,
+) -> anyhow::Result<Option<String>> {
+    Ok(connection
+        .query_row(
+            "SELECT c.workspace_id FROM app_companion_workspaces AS c
+             JOIN resource_workspaces AS rw ON rw.public_id = c.workspace_id
+             WHERE c.app_workspace_id = ?1 AND rw.deleted_revision IS NULL",
+            [app_workspace],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+/// Record `workspace` as the companion of `app_workspace` (in the commit
+/// that creates it).
+pub(crate) fn write_companion(
+    transaction: &Transaction<'_>,
+    app_workspace: &str,
+    workspace: &str,
+) -> anyhow::Result<()> {
+    transaction.execute(
+        "INSERT INTO app_companion_workspaces(app_workspace_id, workspace_id) VALUES(?1, ?2)
+         ON CONFLICT(app_workspace_id) DO UPDATE SET workspace_id = excluded.workspace_id",
+        params![app_workspace, workspace],
+    )?;
+    Ok(())
+}
 
 /// What an `app` tab shows: an app and an optional route inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,7 +356,7 @@ pub(crate) fn read_screen_apps(
         .into_iter()
         .filter_map(|(screen, kind, app)| {
             let kind = AppScreenKind::parse(&kind).ok()?;
-            Some((screen, ScreenApp { kind, app, own_workspace: false }))
+            Some((screen, ScreenApp { kind, app }))
         })
         .collect())
 }
@@ -350,9 +373,7 @@ pub(crate) fn screen_app(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()?;
-    Ok(row.and_then(|(kind, app)| {
-        Some(ScreenApp { kind: AppScreenKind::parse(&kind).ok()?, app, own_workspace: false })
-    }))
+    Ok(row.and_then(|(kind, app)| Some(ScreenApp { kind: AppScreenKind::parse(&kind).ok()?, app })))
 }
 
 /// Delete the kind row of a closed screen (in the tombstone transaction).
@@ -417,7 +438,6 @@ impl AppRule {
     pub(crate) fn code(&self) -> &'static str {
         match self.refusal {
             cmux_layout_reducer::AppRefusal::ScreenFixed => "app.screen_fixed",
-            cmux_layout_reducer::AppRefusal::ColumnLocked => "app.column_locked",
         }
     }
 
@@ -425,7 +445,6 @@ impl AppRule {
     pub(crate) fn raw_code(&self) -> &'static str {
         match self.refusal {
             cmux_layout_reducer::AppRefusal::ScreenFixed => "app-screen-fixed",
-            cmux_layout_reducer::AppRefusal::ColumnLocked => "app-column-locked",
         }
     }
 }
@@ -436,9 +455,6 @@ impl fmt::Display for AppRule {
         match self.refusal {
             cmux_layout_reducer::AppRefusal::ScreenFixed => {
                 write!(formatter, "{code}: screen {screen} shows one app and nothing else")
-            }
-            cmux_layout_reducer::AppRefusal::ColumnLocked => {
-                write!(formatter, "{code}: the app column of screen {screen} is locked")
             }
         }
     }

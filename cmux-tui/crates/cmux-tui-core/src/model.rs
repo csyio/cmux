@@ -930,12 +930,7 @@ impl State {
                 indexes.split_ids.insert(split, public_id);
             }
         }
-        indexes.screen_apps = std::mem::take(&mut self.resource_indexes.screen_apps);
-        indexes.screen_apps.retain(|screen, _| indexes.screen_ids.contains_key(screen));
-        self.resource_indexes = indexes;
-        // `app-screens-v1`: every projection starts here, so every commit
-        // stores the app column pinned left, docked.
-        crate::state::app_rules::pin_app_columns(self);
+        self.resource_indexes = indexes.keep_screen_apps(&mut self.resource_indexes);
     }
 
     pub fn workspace_by_public_id(&self, id: &WorkspacePublicId) -> Option<&Workspace> {

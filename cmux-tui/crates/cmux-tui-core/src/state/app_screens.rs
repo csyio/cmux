@@ -1,44 +1,41 @@
-//! `app-screens-v1` operations (plans/cmux-next/app-screens.md sections 2
-//! and 4): `workspace.ensure_app {app, kind}`, the Home migration of
-//! `workspace.ensure_home {screen: "appColumn", app}`, and the `app` tab
-//! (raw `new-app-tab`, v2 `tab.create_app`).
+//! `app-screens-v1` operations (plans/cmux-next/app-screens.md):
+//! `workspace.ensure_app {app, kind}` and the `app` tab (raw `new-app-tab`,
+//! v2 `tab.create_app`). The Home workspace and the companion workspace of
+//! an app workspace are in app_home.rs.
 //!
-//! `ensure_app` makes one workspace of kind `app` per app, holding one screen
-//! of the asked kind with one `app` tab. Each step is its own commit and the
-//! next call resumes from what exists, so a crash between commits is repaired
-//! by the next call: (1) the workspace with its `app_workspaces` row, (2) the
-//! app tab, which gives the workspace its screen and pane, (3) the screen's
-//! kind row ([`Mux::commit_screen_app`]). The kind row is written last, so no
-//! step before it is refused by the app rules.
-//!
-//! The Home migration turns the home workspace's first screen into an
-//! `appColumn` screen: the Home app tab is created in that screen, moved into
-//! its own column, and the kind commit moves that column to index 0, pins it
-//! left (docked) and writes the kind row in one transaction. Every existing
-//! pane stays, to the right of the app column.
+//! `ensure_app` makes one workspace of kind `app` per app, holding its one
+//! screen with one `app` tab. Each step is its own commit and the next call
+//! resumes from what exists, so a crash between commits is repaired by the
+//! next call: (1) the workspace with its `app_workspaces` row, (2) the app
+//! tab, which gives the workspace its screen and pane, (3) the screen's kind
+//! row ([`Mux::commit_screen_app`]). The kind row is written last, so no
+//! step before it is refused by the app rules. A workspace whose screen
+//! changed between the commits stays an ordinary workspace with every tab,
+//! and the app gets a new workspace.
 
 use std::sync::Mutex;
 
 use serde_json::{Map, json};
 
 use crate::Surface;
-use crate::model::Screen;
 use crate::mux::*;
 use crate::resource::BrowserPublicId;
-use crate::state::app_rules::first_column_panes;
 use crate::state::app_screens_store::{
     APP_TAB_ENGINE, APP_TAB_URL, AppScreenKind, AppTabRecord, ScreenApp, app_tab_for_mutation,
-    live_app_workspace, validate_app_id, write_app_tab, write_screen_app,
+    live_app_workspace, validate_app_id, write_app_tab, write_app_workspace, write_screen_app,
 };
 use crate::state::home_store::EmptyWorkspaceMark;
 use crate::state::prelude::*;
 use crate::workspace_registry::FrontendBrowserRecord;
 
+#[path = "app_home.rs"]
+pub(crate) mod home;
+
 /// One `ensure_app` or Home migration at a time in this process, so two
 /// concurrent calls for one app never make two workspaces.
-static ENSURING: Mutex<()> = Mutex::new(());
+pub(crate) static ENSURING: Mutex<()> = Mutex::new(());
 
-const APP_MUTATION_ORIGIN: &str = "cmux-tui-app";
+pub(crate) const APP_MUTATION_ORIGIN: &str = "cmux-tui-app";
 const SCREEN_APP_OPERATION: &str = "screen.app.set";
 
 /// What `workspace.ensure_app` returns.
@@ -125,7 +122,7 @@ impl Mux {
         self.fill_app_workspace(&workspace_id, workspace, app, kind)
     }
 
-    fn workspace_slot_of(&self, workspace_id: &str) -> anyhow::Result<WorkspaceId> {
+    pub(crate) fn workspace_slot_of(&self, workspace_id: &str) -> anyhow::Result<WorkspaceId> {
         self.with_state(|state| {
             state
                 .workspaces
@@ -157,7 +154,7 @@ impl Mux {
         app: &str,
         kind: AppScreenKind,
     ) -> anyhow::Result<EnsuredApp> {
-        let screen_app = ScreenApp { kind, app: app.to_string(), own_workspace: true };
+        let screen_app = ScreenApp { kind, app: app.to_string() };
         let commit = self.commit_screen_app(screen, screen_app)?;
         let screen_id = self.public_screen(screen)?;
         Ok(EnsuredApp {
@@ -168,108 +165,10 @@ impl Mux {
         })
     }
 
-    /// The Home migration (section 4): the first screen of the home
-    /// workspace `home` becomes `appColumn` with `app`'s column at index 0.
-    /// Idempotent: a migrated screen is left as it is.
-    pub(crate) fn state_migrate_home(
-        self: &Arc<Self>,
-        home: &str,
-        app: &str,
-    ) -> anyhow::Result<()> {
-        validate_app_id(app)?;
-        let _ensuring = ENSURING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let workspace = self
-            .with_state(|state| {
-                state
-                    .workspaces
-                    .iter()
-                    .find(|item| item.public_id.as_str() == home)
-                    .map(|item| item.id)
-            })
-            .context("the home workspace disappeared")?;
-        let first = self.with_state(|state| {
-            let screen = state.workspace_by_id(workspace)?.screens.first()?;
-            Some((screen.id, state.resource_indexes.screen_apps.get(&screen.id).cloned()))
-        });
-        let record = AppTabRecord { app: app.to_string(), route: None };
-        let screen_app = ScreenApp {
-            kind: AppScreenKind::AppColumn,
-            app: app.to_string(),
-            own_workspace: false,
-        };
-        let screen = match first {
-            Some((_, Some(stored))) => {
-                anyhow::ensure!(
-                    stored == screen_app,
-                    "bad request: the home screen is already {} of {}",
-                    stored.kind.as_str(),
-                    stored.app
-                );
-                return Ok(());
-            }
-            None => {
-                let tab =
-                    self.new_app_tab(AppTabTarget::Workspace(workspace), record, None, None)?;
-                let screen = self.screen_of_surface(tab.surface.id)?;
-                self.commit_screen_app(screen, screen_app)?;
-                return Ok(());
-            }
-            Some((screen, None)) => screen,
-        };
-        // Resume a migration a crash interrupted with its app tab; when that
-        // no longer works (the screen changed between the commits), a fresh
-        // app tab takes its place and the old one stays an ordinary tab.
-        if let Some(surface) = self.app_surface_in(screen, app)
-            && self.place_home_app(screen, surface, screen_app.clone()).is_ok()
-        {
-            return Ok(());
-        }
-        let pane = self.with_state(|state| {
-            state
-                .workspace_by_id(workspace)
-                .and_then(|item| item.screens.first())
-                .map(|item| item.active_pane)
-        });
-        let surface = self.new_app_tab(AppTabTarget::Pane(pane), record, None, None)?.surface.id;
-        self.place_home_app(screen, surface, screen_app)
-    }
-
-    /// Give the Home app tab its own column unless it has one alone, then
-    /// the kind commit, which moves that column to index 0.
-    fn place_home_app(
-        self: &Arc<Self>,
-        screen: ScreenId,
-        surface: SurfaceId,
-        screen_app: ScreenApp,
-    ) -> anyhow::Result<()> {
-        let (alone, anchor) = self
-            .with_state(|state| {
-                let pane = state.pane_of(surface)?;
-                let (wi, si) = state.screen_of(pane)?;
-                let screen = &state.workspaces[wi].screens[si];
-                let own = state.panes.get(&pane).is_some_and(|item| item.tabs == [surface]);
-                let column_alone =
-                    match screen.layout_columns.iter().find(|c| c.root.contains(pane)) {
-                        Some(column) => column.root.pane_ids_vec() == [pane],
-                        None => screen.root.pane_ids_vec() == [pane],
-                    };
-                let other =
-                    screen.root.pane_ids_vec().into_iter().find(|candidate| *candidate != pane);
-                Some((own && column_alone, if own { other } else { Some(pane) }))
-            })
-            .context("the home app tab has no pane")?;
-        if !alone {
-            let anchor = anchor.context("the home app tab has no column anchor")?;
-            self.move_tab_to_column(surface, anchor, None, None, None, None)?;
-        }
-        self.commit_screen_app_with(screen, screen_app, Some(surface))?;
-        Ok(())
-    }
-
     /// The screen of `workspace` that is or will become `app`'s screen, and
     /// its stored kind: a screen with a kind row for `app`, else the first
-    /// screen whose column 0 is one pane with only an app tab of `app` (a
-    /// creation a crash interrupted before its kind commit).
+    /// screen with an app tab of `app` (a creation a crash interrupted
+    /// before its kind commit).
     fn app_screen_of(
         &self,
         workspace: WorkspaceId,
@@ -298,7 +197,7 @@ impl Mux {
     }
 
     /// A tab of `screen` showing `app`.
-    fn app_surface_in(&self, screen: ScreenId, app: &str) -> Option<SurfaceId> {
+    pub(crate) fn app_surface_in(&self, screen: ScreenId, app: &str) -> Option<SurfaceId> {
         let presentation = self.presentation_snapshot();
         self.with_state(|state| {
             let screen = state
@@ -321,7 +220,7 @@ impl Mux {
         })
     }
 
-    fn screen_of_surface(&self, surface: SurfaceId) -> anyhow::Result<ScreenId> {
+    pub(crate) fn screen_of_surface(&self, surface: SurfaceId) -> anyhow::Result<ScreenId> {
         self.with_state(|state| {
             let pane = state.pane_of(surface)?;
             let (workspace, screen) = state.screen_of(pane)?;
@@ -338,23 +237,13 @@ impl Mux {
     }
 
     /// One commit: `screen` becomes `screen_app` (its kind row, its index
-    /// entry, and for `appColumn` the app tab's column moved to index 0 and
-    /// pinned left, docked), with a fresh screen upsert in the same batch.
+    /// entry and its workspace's `app_workspaces` row), with a fresh screen
+    /// upsert in the same batch. The screen must already be one pane holding
+    /// only the app tab.
     pub(crate) fn commit_screen_app(
         self: &Arc<Self>,
         screen: ScreenId,
         screen_app: ScreenApp,
-    ) -> anyhow::Result<ResourcePatchCommit> {
-        self.commit_screen_app_with(screen, screen_app, None)
-    }
-
-    /// [`Self::commit_screen_app`] with the app tab named (`None`: the first
-    /// app tab of the screen's app).
-    fn commit_screen_app_with(
-        self: &Arc<Self>,
-        screen: ScreenId,
-        screen_app: ScreenApp,
-        app_surface: Option<SurfaceId>,
     ) -> anyhow::Result<ResourcePatchCommit> {
         let public = self.public_screen(screen)?;
         // The fences every topology effect holds from its app-rule check to
@@ -366,7 +255,7 @@ impl Mux {
             "kind": screen_app.kind.as_str(),
             "app": screen_app.app,
         });
-        let app_surface = app_surface.or_else(|| self.app_surface_in(screen, &screen_app.app));
+        let app_surface = self.app_surface_in(screen, &screen_app.app);
         let commit = self.commit_resource_mutation_plan(
             &WorkspaceMutation::local(APP_MUTATION_ORIGIN),
             SCREEN_APP_OPERATION,
@@ -384,19 +273,16 @@ impl Mux {
                     })
                     .context("the app screen disappeared")?;
                 let mut projected = state.clone();
-                let app_pane = app_surface.and_then(|surface| projected.pane_of(surface));
+                let workspace_id = projected.workspaces[wi].public_id.to_string();
                 let target = &mut projected.workspaces[wi].screens[si];
-                if screen_app.kind == AppScreenKind::AppColumn
-                    && let Some(pane) = app_pane
-                {
-                    arrange_app_column(target, pane);
-                }
+                let panes = target.root.pane_ids_vec();
+                let shaped = target.layout_columns.is_empty()
+                    && matches!(panes.as_slice(), [pane] if app_surface.is_some_and(|surface| {
+                        state.panes.get(pane).is_some_and(|pane| pane.tabs == [surface])
+                    }));
+                anyhow::ensure!(shaped, "the app screen does not have its shape");
                 // No undo entry from before the kind may restore another shape.
                 target.invalidate_layout_undo();
-                anyhow::ensure!(
-                    first_column_panes(target).len() == 1,
-                    "the app screen does not have its shape"
-                );
                 projected.resource_indexes.screen_apps.insert(screen, screen_app.clone());
                 let projection = self.resource_effect_projection_locked(
                     registry,
@@ -404,6 +290,7 @@ impl Mux {
                     json!({"screen": public}),
                 )?;
                 let (row, id) = (screen_app.clone(), public.clone());
+                let app = screen_app.app.clone();
                 Ok(ResourceMutationPlan::new(
                     projection.patch,
                     projection.result,
@@ -413,6 +300,9 @@ impl Mux {
                 .with_state_write(Box::new(
                     move |transaction, _result, changes| {
                         write_screen_app(transaction, &id, &row)?;
+                        // The screen's workspace is its app's workspace (the
+                        // Home workspace gets its row here).
+                        write_app_workspace(transaction, &workspace_id, &app)?;
                         // The kind commit itself is checked on the rows it
                         // commits (the patch check ran before the row).
                         crate::state::app_commit_rules::check_screen(transaction, &id)?;
@@ -580,19 +470,4 @@ enum AppTabBrowser {
     Placed(Arc<Surface>),
     /// The browser id to create the tab under.
     Recorded(BrowserPublicId),
-}
-
-/// Move the column holding `app_pane` to index 0 and pin it left, docked
-/// ([`crate::state::app_rules::pin_screen`]). A screen without columns is the
-/// app column alone and stays as it is.
-fn arrange_app_column(screen: &mut Screen, app_pane: PaneId) {
-    let Some(index) =
-        screen.layout_columns.iter().position(|column| column.root.contains(app_pane))
-    else {
-        return;
-    };
-    let column = screen.layout_columns.remove(index);
-    screen.layout_columns.insert(0, column);
-    screen.sync_layout_column_projection();
-    crate::state::app_rules::pin_screen(screen);
 }

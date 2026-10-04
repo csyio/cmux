@@ -2,7 +2,6 @@
 //! spec/resource-operations-v2.json.
 
 pub(crate) const RESOURCE_ERROR_CODES: &[&str] = &[
-    "app.column_locked",
     "app.screen_fixed",
     "confirmation.required",
     "creation.conflict",

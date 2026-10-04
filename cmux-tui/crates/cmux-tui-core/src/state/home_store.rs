@@ -50,6 +50,9 @@ pub(crate) enum EmptyWorkspaceMark {
     Home,
     /// `app-screens-v1`: a workspace of kind `app` for this app.
     App(String),
+    /// `app-screens-v1`: the companion ordinary workspace of this app
+    /// workspace (public id), placed directly after it.
+    Companion(String),
 }
 
 impl EmptyWorkspaceMark {
@@ -68,6 +71,7 @@ impl EmptyWorkspaceMark {
             Self::Ephemeral => Some(("ephemeral", serde_json::Value::Bool(true))),
             Self::Home => Some(("kind", serde_json::Value::String(HOME_KIND.to_string()))),
             Self::App(app) => Some(("app", serde_json::Value::String(app.clone()))),
+            Self::Companion(app) => Some(("companion_of", serde_json::Value::String(app.clone()))),
         }
     }
 
@@ -91,6 +95,12 @@ impl EmptyWorkspaceMark {
             Self::App(app) => {
                 crate::state::app_screens_store::write_app_workspace(transaction, workspace_id, app)
             }
+            Self::Companion(app) => crate::state::app_screens::home::write_companion_mark(
+                transaction,
+                app,
+                workspace_id,
+                workspace_key,
+            ),
         }
     }
 }

@@ -1,11 +1,11 @@
-//! `app-screens-v1` (plans/cmux-next/app-screens.md): screen kinds `app` and
-//! `appColumn`, the `app` tab, `workspace.ensure_app`, the refusals
-//! `app-screen-fixed` and `app-column-locked` on every command shape, the
-//! read shape, restart persistence and the Home migration.
+//! `app-screens-v1` (plans/cmux-next/app-screens.md, app-only model): the
+//! `app` screen kind, the `app` tab, `workspace.ensure_app`, the refusal
+//! `app-screen-fixed` on every command shape, the read shape, restart
+//! persistence and the Home workspace as an app workspace.
 
 use std::path::PathBuf;
 
-use super::*;
+use super::super::*;
 use crate::workspace_registry::WorkspaceRegistry;
 
 #[path = "app_screens_rules_tests.rs"]
@@ -117,27 +117,6 @@ impl Wire {
     fn terminal_pane(&self) -> (SurfaceId, PaneId) {
         let surface = self.mux.new_workspace(None, Some((80, 22))).unwrap().id;
         (surface, self.mux.with_state(|state| state.pane_of(surface).unwrap()))
-    }
-
-    /// The stored viewport of an appColumn screen: `columns` columns, and
-    /// column 0 (the app column) pinned left, docked; no other left pin.
-    fn assert_stored_app_column(&self, screen_id: &str, columns: usize) {
-        let topology =
-            self.mux.workspace_registry.lock().unwrap().resource_topology_snapshot().unwrap();
-        let screen = topology
-            .screens
-            .iter()
-            .find(|screen| screen.public_id.as_str() == screen_id)
-            .expect("the app screen is stored");
-        let stored = &screen.viewport.columns;
-        assert_eq!(stored.len(), columns, "stored viewport: {stored:?}");
-        let left =
-            crate::ColumnSticky { edge: crate::StickyEdge::Left, mode: crate::StickyMode::Docked };
-        assert_eq!(stored[0].sticky, Some(left), "stored app column: {stored:?}");
-        assert!(
-            stored[1..].iter().all(|column| column.sticky.is_none_or(|s| s.edge != left.edge)),
-            "{stored:?}"
-        );
     }
 
     fn pane_of(&self, surface: SurfaceId) -> PaneId {
@@ -334,19 +313,17 @@ fn ensure_app_creates_one_app_workspace_per_app_and_replays() {
     assert_eq!(v2_tab["content_kind"], "app", "{v2_tab}");
     assert_eq!(v2_tab["extra"]["app"], STORE);
 
-    // A second app gets its own workspace; an appColumn screen is valid with
-    // only the app column.
-    let home = wire.ensure_app(HOME, "appColumn", "open-home");
-    assert_ne!(home["value"]["workspace_id"], workspace.as_str());
-    let raw = wire.screen(home["value"]["screen_id"].as_str().unwrap());
-    assert_eq!((raw["kind"].as_str(), raw["app"].as_str()), (Some("appColumn"), Some(HOME)));
+    // A second app gets its own workspace.
+    let other = wire.ensure_app("cmux/coderouter", "app", "open-coderouter");
+    assert_ne!(other["value"]["workspace_id"], workspace.as_str());
+    let raw = wire.screen(other["value"]["screen_id"].as_str().unwrap());
+    assert_eq!(raw["kind"], "app", "{raw}");
+    assert_eq!(raw["app"], "cmux/coderouter");
     let _ = app_tab(&raw);
 
-    // The same app with the other kind is refused; unknown kinds and bad ids too.
-    let conflict =
-        wire.v2("workspace.ensure_app", json!({"app": STORE, "kind": "appColumn"}), Some("k1"));
-    assert_eq!(conflict["ok"], false, "{conflict}");
+    // v1 has no other kind; bad ids are refused too.
     for params in [
+        json!({"app": STORE, "kind": "appColumn"}),
         json!({"app": STORE, "kind": "workspace"}),
         json!({"app": "", "kind": "app"}),
         json!({"app": "has space", "kind": "app"}),
@@ -476,302 +453,95 @@ fn app_screen_refuses_every_shape_and_changes_nothing() {
     wire.mux.shutdown();
 }
 
-/// On an `appColumn` screen the app column is locked (`app-column-locked`)
-/// and keeps only its width; ordinary columns right of it behave as usual,
-/// and adding a column right of the app column is allowed.
-#[test]
-fn app_column_is_locked_and_ordinary_columns_are_free() {
-    let mut wire = Wire::new();
-    let (terminal, terminal_pane) = wire.terminal_pane();
-    let created = wire.ensure_app(HOME, "appColumn", "open-home");
-    let screen_id = created["value"]["screen_id"].as_str().unwrap().to_string();
-    let workspace_id = created["value"]["workspace_id"].as_str().unwrap().to_string();
-    let (app, app_pane) = app_tab(&wire.screen(&screen_id));
-
-    // A column right of the app column.
-    let right = wire.ok(json!({"cmd": "new-pane-right", "pane": app_pane, "width": 0.5}));
-    let ordinary_surface = right["surface"].as_u64().unwrap();
-    let ordinary = wire.pane_of(ordinary_surface);
-    let raw = wire.screen(&screen_id);
-    let columns = raw["columns"].as_array().cloned().unwrap_or_default();
-    assert_eq!(columns.len(), 2, "{raw}");
-    assert_eq!(columns[0]["app"], HOME, "{raw}");
-    assert!(columns[1].get("app").is_none(), "{raw}");
-    wire.assert_stored_app_column(&screen_id, 2);
-    let before = layout_fingerprint(&wire.tree());
-
-    let code = "app-column-locked";
-    for request in [
-        json!({"cmd": "new-tab", "pane": app_pane}),
-        json!({"cmd": "split", "pane": app_pane, "dir": "down"}),
-        json!({"cmd": "split", "pane": app_pane, "dir": "right"}),
-        json!({"cmd": "new-pane", "pane": app_pane}),
-        json!({"cmd": "new-row", "pane": app_pane, "height_permille": 500}),
-        json!({"cmd": "move-tab", "surface": terminal, "pane": app_pane, "index": 0}),
-        json!({"cmd": "move-tab", "surface": app, "pane": ordinary, "index": 0}),
-        json!({"cmd": "move-tab", "surface": app, "pane": terminal_pane, "index": 0}),
-        json!({"cmd": "move-tab-to-split", "surface": terminal, "pane": app_pane, "edge": "bottom"}),
-        json!({"cmd": "move-tab-to-column", "surface": app, "pane": ordinary}),
-        json!({"cmd": "move-tab-to-new-workspace", "surface": app}),
-        json!({"cmd": "set-column-sticky", "pane": app_pane, "sticky": false}),
-        json!({"cmd": "set-column-sticky", "pane": app_pane, "sticky": true, "edge": "right"}),
-        json!({"cmd": "set-column-sticky", "pane": ordinary, "sticky": true, "edge": "left"}),
-        json!({"cmd": "swap-pane", "pane": app_pane, "target": ordinary}),
-        json!({"cmd": "swap-pane", "pane": ordinary, "target": app_pane}),
-        json!({"cmd": "close-surface", "surface": app}),
-        json!({"cmd": "close-tabs", "surfaces": [app]}),
-        json!({"cmd": "close-pane", "pane": app_pane}),
-        json!({"cmd": "apply-layout", "workspace": wire.workspace_slot(&workspace_id),
-               "layout": {"type": "leaf"}}),
-    ] {
-        wire.refused(request, code);
-    }
-    let public_app_pane = wire.public_pane(app_pane);
-    let public_app = wire.public_tab(app);
-    let code = "app.column_locked";
-    for (index, (operation, params)) in [
-        (
-            "tab.create_terminal",
-            json!({"workspace": workspace_id, "screen": screen_id,
-                                       "pane": public_app_pane}),
-        ),
-        (
-            "pane.split",
-            json!({"workspace": workspace_id, "screen": screen_id,
-                              "pane": public_app_pane, "direction": "down"}),
-        ),
-        (
-            "pane.close",
-            json!({"workspace": workspace_id, "screen": screen_id,
-                              "pane": public_app_pane}),
-        ),
-        (
-            "tab.close",
-            json!({"workspace": workspace_id, "screen": screen_id,
-                             "pane": public_app_pane, "tab": public_app}),
-        ),
-        ("tab.move", wire.tab_move(app, ordinary)),
-        ("tab.move", wire.tab_move(terminal, app_pane)),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        wire.v2_refused(operation, params, &format!("lock-{index}-{operation}"), code);
-    }
-    let column = wire.screen(&screen_id)["columns"][0]["id"].clone();
-    let column = wire.mux.with_state(|state| {
-        state.resource_indexes.split_ids[&column.as_u64().unwrap()].to_string()
-    });
-    wire.v2_refused(
-        "column.update",
-        json!({"workspace": workspace_id, "screen": screen_id, "column": column,
-               "sticky": false}),
-        "unstick-app-column",
-        code,
-    );
-    assert_eq!(layout_fingerprint(&wire.tree()), before, "a refused op changed the layout");
-
-    // The app column keeps its width rule; ordinary columns are free.
-    wire.ok(json!({"cmd": "set-viewport-pane-width", "pane": app_pane, "width": 0.3}));
-    wire.ok(json!({"cmd": "new-tab", "pane": ordinary}));
-    wire.ok(json!({"cmd": "split", "pane": ordinary, "dir": "down"}));
-    // E2: the app column does not scroll, so the only ordinary column may
-    // not be pinned too; with a second ordinary column it may.
-    wire.refused(
-        json!({"cmd": "set-column-sticky", "pane": ordinary, "sticky": true, "edge": "right"}),
-        "sticky-column-last-scrolling",
-    );
-    let third = wire.ok(json!({"cmd": "new-pane-right", "pane": ordinary, "width": 0.5}));
-    let third = wire.pane_of(third["surface"].as_u64().unwrap());
-    wire.ok(json!({"cmd": "set-column-sticky", "pane": third, "sticky": true, "edge": "right"}));
-    wire.ok(json!({"cmd": "set-column-sticky", "pane": third, "sticky": false}));
-    wire.assert_stored_app_column(&screen_id, 3);
-    wire.ok(json!({"cmd": "move-tab", "surface": terminal, "pane": ordinary, "index": 0}));
-    // Closing every ordinary column leaves a valid screen of only the app column.
-    wire.ok(json!({"cmd": "close-pane", "pane": ordinary}));
-    let raw = wire.screen(&screen_id);
-    assert_eq!(raw["kind"], "appColumn", "{raw}");
-    assert!(tabs(&raw).iter().any(|tab| tab["surface"] == json!(app)), "{raw}");
-    wire.mux.shutdown();
+/// The raw workspace whose `resource_id` is `id`.
+fn raw_workspace(tree: &Value, id: &str) -> Value {
+    let workspaces = tree["workspaces"].as_array().unwrap();
+    workspaces.iter().find(|item| item["resource_id"] == id).cloned().unwrap()
 }
 
-/// A new ordinary column right of the app column is allowed from every
-/// shape (`new-pane-right`, `move-tab-to-column` anchored on the app pane or
-/// after the app column, v2 `pane.split` with `viewport_width`); the app
-/// column stays at index 0. A move into the app column is refused.
+/// `workspace.ensure_home {app}`: the home workspace becomes the app
+/// workspace of the Home app; every tab it held moves into its companion
+/// workspace, placed directly after it. Twice in a row and after a restart
+/// the result is the same, and no tab is lost.
 #[test]
-fn app_column_accepts_new_columns_to_its_right() {
-    let mut wire = Wire::new();
-    let created = wire.ensure_app(HOME, "appColumn", "open-home");
-    let screen_id = created["value"]["screen_id"].as_str().unwrap().to_string();
-    let workspace_id = created["value"]["workspace_id"].as_str().unwrap().to_string();
-    let (app, app_pane) = app_tab(&wire.screen(&screen_id));
-    let first = wire.ok(json!({"cmd": "new-pane-right", "pane": app_pane, "width": 0.5}));
-    let ordinary = wire.pane_of(first["surface"].as_u64().unwrap());
-    let moved = wire.ok(json!({"cmd": "new-tab", "pane": ordinary}))["surface"].as_u64().unwrap();
-    wire.ok(json!({"cmd": "move-tab-to-column", "surface": moved, "pane": app_pane}));
-    let raw = wire.screen(&screen_id);
-    let columns = raw["columns"].as_array().unwrap().clone();
-    assert_eq!(columns.len(), 3, "{raw}");
-    assert_eq!(columns[0]["app"], HOME, "{raw}");
-    let app_column = columns[0]["id"].clone();
-    let again = wire.ok(json!({"cmd": "new-tab", "pane": ordinary}))["surface"].as_u64().unwrap();
-    wire.ok(json!({"cmd": "move-tab-to-column", "surface": again, "pane": ordinary,
-                   "after_column": app_column}));
-    let columns = wire.screen(&screen_id)["columns"].as_array().unwrap().clone();
-    assert_eq!(columns.len(), 4);
-    assert_eq!(columns[0]["app"], HOME);
-    assert!(wire.mux.with_state(|state| state.pane_of(again)) != Some(ordinary));
-    let split = json!({"workspace": workspace_id, "screen": screen_id,
-                       "pane": wire.public_pane(app_pane), "direction": "right",
-                       "viewport_width": 0.5});
-    wire.v2_ok("pane.split", split, Some("split-right-of-app"));
-    let raw = wire.screen(&screen_id);
-    let columns = raw["columns"].as_array().unwrap().clone();
-    assert_eq!(columns.len(), 5, "{raw}");
-    assert_eq!(columns[0]["app"], HOME);
-    assert_eq!(
-        app_tab(&json!({"panes": [raw["panes"].as_array().unwrap().iter()
-        .find(|pane| pane["id"] == json!(app_pane)).unwrap()]}))
-        .0,
-        app
-    );
-
-    wire.refused(
-        json!({"cmd": "move-tab", "surface": moved, "pane": app_pane, "index": 0}),
-        "app-column-locked",
-    );
-    wire.v2_refused(
-        "tab.move",
-        wire.tab_move(moved, app_pane),
-        "move-into-app",
-        "app.column_locked",
-    );
-    wire.mux.shutdown();
-}
-
-/// On an `appColumn` screen that is the lone app column (no `columns`), a
-/// tab from another workspace moved to a column anchored on the app pane,
-/// with no `after_column`, makes the first ordinary column right of it.
-#[test]
-fn lone_app_column_takes_a_first_column_from_another_workspace() {
-    let mut wire = Wire::new();
-    let (terminal, _) = wire.terminal_pane();
-    let created = wire.ensure_app(HOME, "appColumn", "open-home");
-    let screen_id = created["value"]["screen_id"].as_str().unwrap().to_string();
-    let (app, app_pane) = app_tab(&wire.screen(&screen_id));
-    assert!(wire.screen(&screen_id).get("columns").is_none());
-    wire.ok(json!({"cmd": "move-tab-to-column", "surface": terminal, "pane": app_pane}));
-    let raw = wire.screen(&screen_id);
-    let columns = raw["columns"].as_array().cloned().unwrap_or_default();
-    assert_eq!(columns.len(), 2, "{raw}");
-    assert_eq!(columns[0]["app"], HOME, "{raw}");
-    assert!(columns[1].get("app").is_none(), "{raw}");
-    wire.assert_stored_app_column(&screen_id, 2);
-    assert_eq!(wire.pane_of(app), app_pane, "the app tab stays in the app column");
-    let moved_pane = wire.pane_of(terminal);
-    assert_ne!(moved_pane, app_pane);
-    let column_of = |pane: PaneId| {
-        columns.iter().position(|column| layout_panes(&column["layout"]).contains(&pane))
-    };
-    assert_eq!(column_of(moved_pane), Some(1), "{raw}");
-    wire.mux.shutdown();
-}
-
-/// `workspace.ensure_home {screen: "appColumn", app}`: the home workspace's
-/// first screen becomes `appColumn` with the Home app column at index 0 and
-/// every existing pane to its right. Twice in a row and after a restart the
-/// result is the same, and no tab is lost.
-#[test]
-fn home_migration_is_idempotent_and_survives_restart() {
-    let store = Store::new("home-migration");
+fn home_becomes_an_app_workspace_and_keeps_every_tab() {
+    let store = Store::new("home-app");
     let mut wire = store.open();
     let home = wire.v2_ok("workspace.ensure_home", json!({}), Some("connect-1"));
     let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
     let home_slot = wire.workspace_slot(&home_id);
     let mut conversations = Vec::new();
-    let mut second = 0;
     for (index, conversation) in ["conv_01A", "conv_01B"].into_iter().enumerate() {
         let created = wire.ok(json!({"cmd": "new-conversation-tab", "workspace": home_slot,
                                     "conversation": conversation, "owner": "local",
                                     "origin": "home-test", "mutation_id": format!("c{index}")}));
         conversations.push(created["tab_resource_id"].as_str().unwrap().to_string());
-        second = created["surface"].as_u64().unwrap();
     }
-    let split = wire.pane_of(second);
-    wire.ok(json!({"cmd": "move-tab-to-column", "surface": second, "pane": split}));
-
-    let migrate = json!({"screen": "appColumn", "app": HOME});
-    let first = wire.v2_ok("workspace.ensure_home", migrate.clone(), Some("connect-2"));
-    assert_eq!(first["value"]["workspace_id"], home_id.as_str());
-    let check = |wire: &mut Wire| -> Value {
+    let migrate = json!({"app": HOME});
+    wire.v2_ok("workspace.ensure_home", migrate.clone(), Some("connect-2"));
+    let check = |wire: &mut Wire| -> (Value, Value) {
         let tree = wire.tree();
-        let workspace = tree["workspaces"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|item| item["resource_id"] == home_id.as_str())
-            .cloned()
-            .unwrap();
-        let screen = workspace["screens"][0].clone();
-        assert_eq!(screen["kind"], "appColumn", "{screen}");
-        assert_eq!(screen["app"], HOME);
-        let columns = screen["columns"].as_array().cloned().unwrap();
-        assert_eq!(columns.len(), 3, "the app column and the two existing columns: {screen}");
-        assert_eq!(columns[0]["app"], HOME);
-        assert!(columns[1..].iter().all(|column| column.get("app").is_none()));
-        wire.assert_stored_app_column(screen["resource_id"].as_str().unwrap(), 3);
-        let tabs = tabs(&screen);
-        assert_eq!(tabs.len(), 3, "{screen}");
-        assert_eq!(tabs.iter().filter(|tab| tab["kind"] == "app").count(), 1);
+        let home = raw_workspace(&tree, &home_id);
+        assert_eq!(home["kind"], "home", "{home}");
+        let screens = home["screens"].as_array().unwrap();
+        assert_eq!(screens.len(), 1, "{home}");
+        assert_eq!(screens[0]["kind"], "app", "{home}");
+        assert_eq!(screens[0]["app"], HOME, "{home}");
+        let _ = app_tab(&screens[0]);
+        // The companion is the next workspace in the personal order.
+        let order = wire.v2_ok("workspace.placement.list", json!({}), None);
+        let order = order.as_array().unwrap().clone();
+        assert_eq!(order[0]["workspace"]["workspace_id"], home_id.as_str(), "{order:?}");
+        let companion_id = order[1]["workspace"]["workspace_id"].as_str().unwrap().to_string();
+        let companion = raw_workspace(&tree, &companion_id);
+        assert_eq!(companion["name"], "Home Tabs", "{companion}");
+        assert_eq!(companion["kind"], "normal", "{companion}");
+        let screens = companion["screens"].as_array().unwrap();
+        let moved = screens.iter().flat_map(tabs).collect::<Vec<_>>();
         for tab_id in &conversations {
-            assert!(
-                tabs.iter().any(|tab| tab["tab_resource_id"] == json!(tab_id)),
-                "lost {tab_id}"
-            );
+            let kept = moved.iter().any(|tab| tab["tab_resource_id"] == json!(tab_id));
+            assert!(kept, "lost {tab_id}: {companion}");
         }
-        layout_fingerprint(&screen)
+        (layout_fingerprint(&home), layout_fingerprint(&companion))
     };
     let migrated = check(&mut wire);
-    let second = wire.v2_ok("workspace.ensure_home", migrate.clone(), Some("connect-3"));
-    assert_eq!(second["value"]["workspace_id"], home_id.as_str());
-    assert_eq!(check(&mut wire), migrated, "the second migration changed the screen");
-    // A client without the field leaves the migrated screen as it is.
+    wire.v2_ok("workspace.ensure_home", migrate.clone(), Some("connect-3"));
+    assert_eq!(check(&mut wire), migrated, "the second migration changed something");
     wire.v2_ok("workspace.ensure_home", json!({}), Some("connect-4"));
     assert_eq!(check(&mut wire), migrated);
+    // ensure_app for the Home app names the home workspace.
+    let ensured = wire.ensure_app(HOME, "app", "open-home");
+    assert_eq!(ensured["value"]["workspace_id"], home_id.as_str(), "{ensured}");
     wire.mux.shutdown();
     drop(wire);
 
     let mut wire = store.open();
     let restarted = check(&mut wire);
     wire.v2_ok("workspace.ensure_home", migrate, Some("connect-5"));
-    assert_eq!(check(&mut wire), restarted, "the migration after a restart changed the screen");
+    assert_eq!(check(&mut wire), restarted, "the migration after a restart changed something");
     wire.mux.shutdown();
 }
 
-/// An empty home workspace migrates to a screen of only the Home app column.
+/// An empty home workspace becomes the Home app screen; no companion is
+/// made until a new tab is sent to the home.
 #[test]
-fn home_migration_fills_an_empty_home() {
+fn empty_home_becomes_the_home_app_screen() {
     let mut wire = Wire::new();
-    let migrate = json!({"screen": "appColumn", "app": HOME});
-    let home = wire.v2_ok("workspace.ensure_home", migrate.clone(), Some("connect-1"));
+    let home = wire.v2_ok("workspace.ensure_home", json!({"app": HOME}), Some("connect-1"));
     let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
     let tree = wire.tree();
-    let workspace = tree["workspaces"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|item| item["resource_id"] == home_id.as_str())
-        .cloned()
-        .unwrap();
-    assert_eq!(workspace["kind"], "home");
+    let workspace = raw_workspace(&tree, &home_id);
     let screen = workspace["screens"][0].clone();
-    assert_eq!((screen["kind"].as_str(), screen["app"].as_str()), (Some("appColumn"), Some(HOME)));
+    assert_eq!(screen["kind"], "app", "{screen}");
+    assert_eq!(screen["app"], HOME, "{screen}");
     let _ = app_tab(&screen);
-    wire.v2_ok("workspace.ensure_home", migrate, Some("connect-2"));
-    assert_eq!(layout_fingerprint(&wire.tree()), layout_fingerprint(&tree));
+    let count = tree["workspaces"].as_array().unwrap().len();
+    wire.v2_ok("workspace.ensure_home", json!({"app": HOME}), Some("connect-2"));
+    let after = wire.tree();
+    assert_eq!(layout_fingerprint(&after), layout_fingerprint(&tree));
+    assert_eq!(after["workspaces"].as_array().unwrap().len(), count);
     let refused =
-        wire.v2("workspace.ensure_home", json!({"screen": "app", "app": HOME}), Some("connect-3"));
+        wire.v2("workspace.ensure_home", json!({"screen": "appColumn", "app": HOME}), Some("c3"));
     assert_eq!(refused["error"]["code"], "validation.invalid", "{refused}");
     wire.mux.shutdown();
 }

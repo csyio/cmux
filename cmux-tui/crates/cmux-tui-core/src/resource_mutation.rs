@@ -191,9 +191,6 @@ impl ResourceMutationPlan {
             StateStep::Replace(projected) => *state = *projected,
             StateStep::Staged => {}
         }
-        // The projection pinned the app columns it committed; a closure
-        // step replays the change on the live state, so pin that too.
-        crate::state::app_rules::pin_app_columns(state);
         if let Some(workspace_revision) = workspace_revision {
             state.workspace_revision = workspace_revision;
         }

@@ -1133,7 +1133,7 @@ class Screen:
     panes: List[Pane]
     zoomed_pane: Union[Id, None]
     app: Union[str, MissingType] = field(default=MISSING)
-    kind: Union[Literal['app', 'appColumn'], MissingType] = field(default=MISSING)
+    kind: Union[Literal['app'], MissingType] = field(default=MISSING)
     short_id: Union[str, MissingType] = field(default=MISSING)
 
 

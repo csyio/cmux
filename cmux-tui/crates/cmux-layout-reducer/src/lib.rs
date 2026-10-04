@@ -307,8 +307,6 @@ pub enum Reject {
     IdempotencyConflict(IdempotencyKey),
     /// A1: an app screen holds only its app ([`app_screens`]).
     AppScreenFixed(ScreenId),
-    /// A2: the app column of an `appColumn` screen keeps its shape.
-    AppColumnLocked(ScreenId),
     /// The result would break an invariant.
     Invariant(Vec<Violation>),
 }
@@ -342,9 +340,6 @@ impl fmt::Display for Reject {
             }
             Self::AppScreenFixed(screen) => {
                 write!(f, "app-screen-fixed: screen {screen} is an app")
-            }
-            Self::AppColumnLocked(screen) => {
-                write!(f, "app-column-locked: the app column of screen {screen} is locked")
             }
             Self::Invariant(violations) => {
                 write!(f, "invariant violated:")?;
@@ -390,8 +385,7 @@ pub enum Violation {
     EmptyPane { pane: PaneId },
     /// R1/R2/R4: a column's rows do not partition its panes.
     RowLayout { column: ColumnId },
-    /// A1/A2: an app screen or its app column holds other than one pane
-    /// with one tab.
+    /// A1: an app screen holds other than one pane with one tab.
     AppScreenShape { screen: ScreenId },
 }
 

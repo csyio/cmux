@@ -98,7 +98,7 @@
             "kind": "resource_id",
             "resource": "screen"
           },
-          "description": "Its screen (extra.kind app or appColumn)."
+          "description": "Its screen (extra.kind app)."
         }
       },
       "extra": false
@@ -7688,23 +7688,6 @@
     }
   },
   "errors": {
-    "app.column_locked": {
-      "retryable": false,
-      "details": {
-        "kind": "object",
-        "fields": {
-          "screen_id": {
-            "required": true,
-            "type": {
-              "kind": "resource_id",
-              "resource": "screen"
-            },
-            "description": "The appColumn screen (app-screens-v1). Its app column keeps its pane, tab, position and left pin; only its width may change."
-          }
-        },
-        "extra": false
-      }
-    },
     "app.screen_fixed": {
       "retryable": false,
       "details": {
@@ -9871,7 +9854,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -9970,7 +9952,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -11322,7 +11303,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "home.not_closable",
         "idempotency.conflict",
@@ -11412,7 +11392,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "creation.conflict",
         "idempotency.conflict",
@@ -11857,7 +11836,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "creation.conflict",
         "idempotency.conflict",
@@ -11980,7 +11958,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "creation.conflict",
         "idempotency.conflict",
@@ -12124,7 +12101,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -13136,7 +13112,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "creation.conflict",
         "idempotency.conflict",
@@ -13320,7 +13295,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "confirmation.required",
         "idempotency.conflict",
@@ -13423,7 +13397,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -15228,7 +15201,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "home.not_closable",
         "idempotency.conflict",
@@ -15278,9 +15250,9 @@
               "kind": "primitive",
               "name": "string",
               "min_length": 1,
-              "max_length": 2048
+              "max_length": 4096
             },
-            "description": "A route inside the app, without control characters."
+            "description": "A route inside the app, or a first-party page's small client state, without control characters."
           },
           "expected_revision": {
             "required": false,
@@ -15307,7 +15279,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -15406,7 +15377,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "creation.conflict",
         "idempotency.conflict",
@@ -15506,7 +15476,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "creation.conflict",
         "idempotency.conflict",
@@ -15718,7 +15687,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -16378,7 +16346,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -17386,7 +17353,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -18351,11 +18317,10 @@
             "type": {
               "kind": "enum",
               "values": [
-                "app",
-                "appColumn"
+                "app"
               ]
             },
-            "description": "The screen kind from the manifest presentation.screen."
+            "description": "The screen kind from the manifest presentation.screen; v1 has app only."
           }
         },
         "extra": false,
@@ -18396,16 +18361,6 @@
           "session": "required"
         },
         "fields": {
-          "screen": {
-            "required": false,
-            "type": {
-              "kind": "enum",
-              "values": [
-                "appColumn"
-              ]
-            },
-            "description": "app-screens-v1: the home workspace's first screen becomes appColumn. Sent with app."
-          },
           "app": {
             "required": false,
             "type": {
@@ -18414,13 +18369,13 @@
               "min_length": 1,
               "max_length": 128
             },
-            "description": "The Home app id. Sent with screen."
+            "description": "app-screens-v1: the Home app id. The home workspace becomes its app workspace."
           }
         },
         "extra": false,
         "constraints": [
           "The hosting app sends it on every connect when the server advertises workspace-kind-v1. The store creates the one home workspace (extra.kind home) on the first call, places it first and ungrouped in the personal order, and replays it after that. The idempotency key does not select the home: every call names the same workspace. workspace.create never accepts kind.",
-          "With screen appColumn and app (app-screens-v1) the first screen of the home workspace becomes appColumn: the app column of app is inserted at index 0, pinned left (docked), and the existing panes stay to its right, with no tab lost. A migrated screen is left as it is, and an empty home workspace gets a screen of only the app column."
+          "With app (app-screens-v1) the home workspace becomes the app workspace of app: one app screen holding its app tab. Every screen it held before moves, with no tab lost, into its companion ordinary workspace, placed directly after it. A migrated home is left as it is."
         ]
       },
       "result": {
@@ -18434,7 +18389,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "operation.failed",
@@ -18563,7 +18517,6 @@
         ]
       },
       "errors": [
-        "app.column_locked",
         "app.screen_fixed",
         "idempotency.conflict",
         "mutation.indeterminate",

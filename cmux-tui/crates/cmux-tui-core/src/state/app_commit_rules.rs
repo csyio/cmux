@@ -9,10 +9,7 @@
 //! For every live app screen the patch touches:
 //! - A1: an `app` screen is one leaf pane (no viewport columns) holding one
 //!   tab, an `app` tab of the screen's app.
-//! - A2: the app column of an `appColumn` screen (viewport column 0, or the
-//!   whole layout without columns) is one leaf pane holding one such tab.
-//! - Its workspace is the app workspace of its app, or for an `appColumn`
-//!   screen the home workspace.
+//! - Its workspace is the app workspace of its app.
 //!
 //! And every app workspace the patch touches has at most one live screen.
 
@@ -21,7 +18,6 @@ use std::collections::BTreeSet;
 use cmux_layout_reducer::AppRefusal;
 use rusqlite::{OptionalExtension, Transaction};
 
-use crate::model::{ColumnSticky, StickyEdge, StickyMode};
 use crate::state::app_screens_store::AppRule;
 use crate::workspace_registry::{
     RegistryLayoutNode, RegistryViewport, ResourceChange, ResourcePatch,
@@ -102,7 +98,7 @@ fn holds_only_app(transaction: &Transaction<'_>, pane: &str, app: &str) -> anyho
 pub(crate) fn check_screen(transaction: &Transaction<'_>, screen: &str) -> anyhow::Result<()> {
     let row = transaction
         .query_row(
-            "SELECT k.kind, k.app_id, s.workspace_id, s.layout_json, s.viewport_json
+            "SELECT k.app_id, s.workspace_id, s.layout_json, s.viewport_json
              FROM resource_screen_kinds AS k
              JOIN resource_screens AS s ON s.public_id = k.screen_id
              WHERE k.screen_id = ?1 AND s.deleted_revision IS NULL",
@@ -113,39 +109,25 @@ pub(crate) fn check_screen(transaction: &Transaction<'_>, screen: &str) -> anyho
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
                 ))
             },
         )
         .optional()?;
-    let Some((kind, app, workspace, layout, viewport)) = row else { return Ok(()) };
-    let app_screen = kind == "app";
-    let refusal = if app_screen { AppRefusal::ScreenFixed } else { AppRefusal::ColumnLocked };
+    let Some((app, workspace, layout, viewport)) = row else { return Ok(()) };
     let layout: RegistryLayoutNode = serde_json::from_str(&layout)?;
     let viewport: RegistryViewport = serde_json::from_str(&viewport)?;
-    let left = ColumnSticky { edge: StickyEdge::Left, mode: StickyMode::Docked };
-    let app_pane = match viewport.columns.first() {
-        Some(_) if app_screen => None,
-        // A2 in the stored model: the app column is pinned left, docked.
-        Some(column) if column.sticky != Some(left) => None,
-        Some(column) => leaf(&column.layout),
-        None => leaf(&layout),
-    };
-    let shaped = match app_pane {
-        Some(pane) => holds_only_app(transaction, &pane, &app)?,
-        None => false,
+    let shaped = match leaf(&layout) {
+        Some(pane) if viewport.columns.is_empty() => holds_only_app(transaction, &pane, &app)?,
+        _ => false,
     };
     let workspace_app =
         one(transaction, "SELECT app_id FROM app_workspaces WHERE workspace_id = ?1", &workspace)?;
-    let placed = match workspace_app {
-        Some(owner) => owner == app,
-        None => {
-            !app_screen
-                && crate::state::home_store::workspace_kind(transaction, &workspace)?
-                    == Some(crate::state::home_store::HOME_KIND.to_string())
-        }
-    };
-    if shaped && placed { Ok(()) } else { Err(AppRule::new(refusal, screen.to_string()).into()) }
+    let placed = workspace_app.is_some_and(|owner| owner == app);
+    if shaped && placed {
+        Ok(())
+    } else {
+        Err(AppRule::new(AppRefusal::ScreenFixed, screen.to_string()).into())
+    }
 }
 
 /// An app workspace keeps at most one live screen.
@@ -203,16 +185,14 @@ pub(crate) fn before_patch(
     }
     let kinds = transaction
         .prepare(
-            "SELECT k.screen_id, k.kind, k.app_id FROM resource_screen_kinds AS k
+            "SELECT k.screen_id, k.app_id FROM resource_screen_kinds AS k
              JOIN resource_screens AS s ON s.public_id = k.screen_id
              WHERE s.deleted_revision IS NULL",
         )?
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        })?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
     let mut screens = Vec::with_capacity(kinds.len());
-    for (screen, kind, app) in kinds {
+    for (screen, app) in kinds {
         let tabs = transaction
             .prepare(
                 "SELECT t.public_id FROM resource_tabs AS t
@@ -223,9 +203,7 @@ pub(crate) fn before_patch(
             )?
             .query_map([&screen, &app], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        let refusal =
-            if kind == "app" { AppRefusal::ScreenFixed } else { AppRefusal::ColumnLocked };
-        screens.push((screen, refusal, tabs));
+        screens.push((screen, AppRefusal::ScreenFixed, tabs));
     }
     Ok(Some(AppScreensBefore { screens }))
 }

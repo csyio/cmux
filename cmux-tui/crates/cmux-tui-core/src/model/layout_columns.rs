@@ -30,10 +30,6 @@ pub(crate) struct LayoutColumn {
     /// `rows-v1`: empty, or two or more rows whose trees `root` chains
     /// (plans/cmux-next/rows.md, super::layout_rows).
     pub(crate) rows: Vec<LayoutRow>,
-    /// `app-screens-v1`: the app column of an appColumn screen (column 0,
-    /// pinned left and docked). Derived from the screen's kind row, never
-    /// stored in `viewport_json`; normalization keeps its pin.
-    pub(crate) app: bool,
 }
 
 impl LayoutColumn {
@@ -44,7 +40,7 @@ impl LayoutColumn {
         root: Node,
         zellij_auto_layout: Option<Vec<PaneId>>,
     ) -> Self {
-        Self { id, width, root, zellij_auto_layout, sticky: None, rows: Vec::new(), app: false }
+        Self { id, width, root, zellij_auto_layout, sticky: None, rows: Vec::new() }
     }
 
     /// A new scrolling column holding one pane.
@@ -202,14 +198,9 @@ pub(crate) fn sticky_flags_are_consistent(flags: &[Option<ColumnSticky>]) -> boo
 /// reordered columns: a second column on an edge loses its flag, and when no
 /// scrolling column remains every flag is cleared. Commands that set flags
 /// validate first, so this only acts after removals.
-///
-/// An app column keeps its left pin: when every ordinary column is pinned,
-/// only their flags are cleared (`app-screens-v1`).
 pub(crate) fn normalize_sticky_columns(columns: &mut [LayoutColumn]) {
-    let lone = columns.len() < 2;
-    let pinned = |column: &LayoutColumn| column.app || column.sticky.is_some();
-    if lone || columns.iter().all(pinned) {
-        for column in columns.iter_mut().filter(|column| lone || !column.app) {
+    if columns.len() < 2 || columns.iter().all(|column| column.sticky.is_some()) {
+        for column in columns.iter_mut() {
             column.sticky = None;
         }
         return;

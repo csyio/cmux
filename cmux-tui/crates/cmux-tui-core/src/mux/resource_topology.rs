@@ -627,6 +627,7 @@ impl Mux {
         expected_revision: Option<u64>,
         mutation: &WorkspaceMutation,
     ) -> anyhow::Result<ResourcePatchCommit> {
+        let selectors = self.route_new_tab_to_companion(operation, selectors)?;
         let fingerprint_fields = if is_created_path_operation(operation) {
             semantic_creation_fields(&fields)
         } else {
@@ -4805,12 +4806,8 @@ impl Mux {
         }
         let active_at = self.next_active_at();
         let notifications = self.tree_decorations();
-        let column_added;
         let attached = {
             let mut state = self.state.lock().unwrap();
-            let (target, routed) =
-                app_rules::route_new_tab_pane(&mut state, target, || self.next_id())?;
-            column_added = routed;
             let delta = match state.panes.get_mut(&target) {
                 Some(pane) => {
                     pane.tabs.push(surface.id);
@@ -4859,9 +4856,6 @@ impl Mux {
             anyhow::bail!("pane disappeared while creating tab");
         };
         self.emit_tree_delta(delta, true);
-        if column_added {
-            self.emit(MuxEvent::TreeChanged);
-        }
         self.reap_if_dead(&surface);
         Ok(created)
     }

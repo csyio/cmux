@@ -34,7 +34,7 @@ pub enum ColumnStickyError {
     /// The durable commit failed; details are reported as a status event.
     CommitFailed,
     /// `app-screens-v1`: the change would move or unpin an app column, or
-    /// touch an app screen (`app-column-locked`, `app-screen-fixed`).
+    /// touch an app screen (`app-screen-fixed`).
     AppRule { code: &'static str, message: String },
 }
 
@@ -188,15 +188,9 @@ fn sticky_column_location(
 }
 
 /// The app rules of a sticky change of `pane`'s column (`app-screens-v1`).
-fn refuse_app_column(
-    state: &State,
-    pane: PaneId,
-    sticky: Option<ColumnSticky>,
-) -> Result<(), ColumnStickyError> {
-    let Some((workspace, screen)) = state.screen_of(pane) else { return Ok(()) };
-    let screen = &state.workspaces[workspace].screens[screen];
-    let index = screen.layout_columns.iter().position(|column| column.root.contains(pane));
-    app_rules::refuse_column(state, screen.id, index.unwrap_or(0), sticky).map_err(|error| {
+fn refuse_app_column(state: &State, pane: PaneId) -> Result<(), ColumnStickyError> {
+    let place = app_rules::AppPlace::Pane(pane);
+    app_rules::refuse(state, place, cmux_layout_reducer::AppAction::Sticky).map_err(|error| {
         ColumnStickyError::AppRule {
             code: crate::state::app_screens_store::raw_error_code(&error).unwrap_or_default(),
             message: error.to_string(),
@@ -220,7 +214,7 @@ impl Mux {
             transaction,
         });
         let unchanged = self.with_state(|state| {
-            refuse_app_column(state, pane, sticky)?;
+            refuse_app_column(state, pane)?;
             // A screen stored as one split tree is one implicit column: the
             // only column cannot be pinned, and unpinning it changes nothing.
             if let Some((workspace, screen)) = state.screen_of(pane) {

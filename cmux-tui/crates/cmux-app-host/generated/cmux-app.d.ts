@@ -1344,9 +1344,9 @@ interface CmuxGlobal {
     /** `workspace.create` (mutation, scope `workspace:write`) */
     create: CmuxOp<{ machine?: string; session?: string; name?: string; initial_content: "terminal" | "empty"; ephemeral?: boolean; correlation_key?: string; expected_revision?: string }, Cmux.MutationResult<Cmux.CreatedPath>>
     /** `workspace.ensure_app` (mutation, scope `workspace:write`) */
-    ensure_app: CmuxOp<{ machine?: string; session?: string; app: string; kind: "app" | "appColumn" }, Cmux.MutationResult<Cmux.EnsuredAppScreen>>
+    ensure_app: CmuxOp<{ machine?: string; session?: string; app: string; kind: "app" }, Cmux.MutationResult<Cmux.EnsuredAppScreen>>
     /** `workspace.ensure_home` (mutation, scope `workspace:write`) */
-    ensure_home: CmuxOp<{ machine?: string; session?: string; screen?: "appColumn"; app?: string }, Cmux.MutationResult<Cmux.CreatedWorkspaceOnly>>
+    ensure_home: CmuxOp<{ machine?: string; session?: string; app?: string }, Cmux.MutationResult<Cmux.CreatedWorkspaceOnly>>
     /** `workspace.focus` (mutation, scope `workspace:write`) */
     focus: CmuxOp<{ machine?: string; session?: string; workspace: string; expected_revision?: string }, Cmux.MutationResult<Cmux.WorkspaceSnapshot>>
     /** `workspace.get` (read, scope `workspace:read`) */

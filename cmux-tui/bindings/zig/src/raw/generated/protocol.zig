@@ -7,7 +7,7 @@ const client_runtime = @import("../client.zig");
 
 pub const schema_version: u16 = 2;
 pub const mux_protocol: u16 = 12;
-pub const ir_sha256 = "9efd2cbaa76a17aedfcce9ddb6d2642121da1e3e3a3fb3409f4568b04d63b3ee";
+pub const ir_sha256 = "081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd";
 
 pub const AgentRecord = struct {
     session: wire.Nullable([]const u8),
@@ -1274,18 +1274,15 @@ pub const RunResult = struct {
 
 pub const ScreenKind = enum {
     app,
-    app_column,
 
     pub fn fromWire(value: []const u8) !@This() {
         if (std.mem.eql(u8, value, "app")) return .app;
-        if (std.mem.eql(u8, value, "appColumn")) return .app_column;
         return error.UnknownEnumValue;
     }
 
     pub fn toWire(self: @This()) []const u8 {
         return switch (self) {
             .app => "app",
-            .app_column => "appColumn",
         };
     }
 };

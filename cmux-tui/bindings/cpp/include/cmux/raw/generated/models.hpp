@@ -14,7 +14,7 @@
 namespace cmux::raw {
 
 inline constexpr std::uint32_t kMuxProtocolVersion = 12U;
-inline constexpr std::string_view kProtocolIrSha256 = "9efd2cbaa76a17aedfcce9ddb6d2642121da1e3e3a3fb3409f4568b04d63b3ee";
+inline constexpr std::string_view kProtocolIrSha256 = "081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd";
 
 struct AgentRecord;
 enum class AgentReportSource;
@@ -3281,7 +3281,6 @@ struct SaveTabGroupRequest {
 
 enum class ScreenKind {
     app,
-    app_column,
 };
 
 struct Screen {

@@ -1,30 +1,33 @@
-//! The one validator of `app-screens-v1` (plans/cmux-next/app-screens.md
-//! section 2). Every command shape maps to a place and a
+//! The one validator of `app-screens-v1` (plans/cmux-next/app-screens.md).
+//! Every command shape maps to a place and a
 //! [`cmux_layout_reducer::AppAction`], and the reducer's
 //! [`cmux_layout_reducer::check_app_target`] decides; the reducer's own
-//! `apply` uses the same table for layout ops. Callers:
+//! `apply` uses the same table for layout ops. An app screen is the only
+//! screen of its app workspace and holds only its app tab; it refuses every
+//! change but closing it with its workspace. Callers:
 //!
 //! - the topology effect intent (raw `new-tab`, `split`, `new-pane`,
-//!   `new-pane-right`, `new-row`, `close-surface`, `close-pane` and the v2
-//!   `tab.create_*`, `pane.create`, `pane.split`, `pane.close`, `tab.close`,
-//!   `workspace.layout.apply`): [`refuse_effect`];
+//!   `new-pane-right`, `new-row`, `new-screen`, `close-surface`, `close-pane`,
+//!   `undo-layout` and the v2 `tab.create_*`, `pane.*`, `tab.close`,
+//!   `screen.create`, `screen.layout.undo`, `workspace.layout.apply`):
+//!   [`refuse_effect`];
 //! - every staged layout op (raw `move-tab*`, v2 `tab.move`): [`refuse_op`];
-//! - `pane.swap`, `column.update`, `set-column-sticky`, `apply-layout` and
-//!   `close-tabs` call [`refuse`] or [`refuse_column`] directly.
+//! - `pane.swap`, `column.update`, `set-column-sticky`, `apply-layout`,
+//!   `close-tabs` and `move-tab-to-workspace` call [`refuse`] directly.
 //!
-//! A refusal is checked before the change, so it changes nothing (A4).
+//! These run before a change, so a refusal changes nothing (A4); the check
+//! in the commit (app_commit_rules.rs) is the authoritative one. A new tab
+//! sent to an app workspace (not to a pane) is not refused: it goes to the
+//! app workspace's companion ordinary workspace (app_screens.rs).
 
 use cmux_layout_reducer::{AppAction, AppRefusal, LayoutOpKind, LayoutState, Reject, ScreenKind};
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
 use crate::model::State;
-use crate::model::{ColumnSticky, StickyEdge};
 use crate::resource::{ContentPublicId, ResourceOperation};
 use crate::resource_selector::ResolvedResourceSlots;
-use crate::state::app_screens_store::{
-    AppRule, AppScreenKind, ScreenApp, read_app_tabs, read_screen_apps, workspace_app,
-};
+use crate::state::app_screens_store::{ScreenApp, read_app_tabs, read_screen_apps};
 use crate::{PaneId, ScreenId, SurfaceId, WorkspaceId};
 
 /// Where an action lands.
@@ -32,105 +35,55 @@ use crate::{PaneId, ScreenId, SurfaceId, WorkspaceId};
 pub(crate) enum AppPlace {
     Pane(PaneId),
     Tab(SurfaceId),
-    /// A screen-level creation lands next to the screen's active pane.
     Screen(ScreenId),
-    /// A workspace-level creation lands in its active screen.
+    /// Every screen of the workspace.
     Workspace(WorkspaceId),
 }
 
 /// The reducer kind of a screen.
 pub(crate) fn reducer_kind(state: &State, screen: ScreenId) -> ScreenKind {
-    state
-        .resource_indexes
-        .screen_apps
-        .get(&screen)
-        .map_or(ScreenKind::Workspace, |screen| screen.kind.reducer())
-}
-
-/// The pane ids of a screen's column 0 (its whole tree without columns).
-pub(crate) fn first_column_panes(screen: &crate::model::Screen) -> Vec<PaneId> {
-    match screen.layout_columns.first() {
-        Some(column) => column.root.pane_ids_vec(),
-        None => screen.root.pane_ids_vec(),
+    if state.resource_indexes.screen_apps.contains_key(&screen) {
+        ScreenKind::App
+    } else {
+        ScreenKind::Workspace
     }
 }
 
-/// `pane`'s screen and whether `pane` is in column 0.
-fn pane_place(state: &State, pane: PaneId) -> Option<(ScreenId, bool)> {
+fn pane_screen(state: &State, pane: PaneId) -> Option<ScreenId> {
     let (workspace, screen) = state.screen_of(pane)?;
-    let screen = &state.workspaces[workspace].screens[screen];
-    Some((screen.id, first_column_panes(screen).contains(&pane)))
+    Some(state.workspaces[workspace].screens[screen].id)
 }
 
 fn rule(state: &State, refusal: AppRefusal, screen: ScreenId) -> anyhow::Error {
     let public = state.resource_indexes.screen_ids.get(&screen).map(ToString::to_string);
-    AppRule::new(refusal, public.unwrap_or_default()).into()
+    crate::state::app_screens_store::AppRule::new(refusal, public.unwrap_or_default()).into()
 }
 
 /// [`cmux_layout_reducer::check_app_target`] at a known screen.
-pub(crate) fn refuse_at(
-    state: &State,
-    screen: ScreenId,
-    in_first_column: bool,
-    action: AppAction,
-) -> anyhow::Result<()> {
-    let kind = reducer_kind(state, screen);
-    let in_app_column = in_first_column && kind == ScreenKind::AppColumn;
-    cmux_layout_reducer::check_app_target(kind, in_app_column, action)
+pub(crate) fn refuse_at(state: &State, screen: ScreenId, action: AppAction) -> anyhow::Result<()> {
+    cmux_layout_reducer::check_app_target(reducer_kind(state, screen), action)
         .map_err(|refusal| rule(state, refusal, screen))
 }
 
 /// Refuse `action` at `place` when the rule table says so. Unknown places
 /// pass: the command reports them itself.
 pub(crate) fn refuse(state: &State, place: AppPlace, action: AppAction) -> anyhow::Result<()> {
-    let target = match place {
-        AppPlace::Pane(pane) => pane_place(state, pane),
-        AppPlace::Tab(tab) => state.pane_of(tab).and_then(|pane| pane_place(state, pane)),
-        AppPlace::Screen(screen) => {
-            let active = state
-                .workspaces
-                .iter()
-                .flat_map(|workspace| &workspace.screens)
-                .find(|candidate| candidate.id == screen)
-                .map(|candidate| candidate.active_pane);
-            active.and_then(|pane| pane_place(state, pane)).or(Some((screen, false)))
+    let screen = match place {
+        AppPlace::Pane(pane) => pane_screen(state, pane),
+        AppPlace::Tab(tab) => state.pane_of(tab).and_then(|pane| pane_screen(state, pane)),
+        AppPlace::Screen(screen) => Some(screen),
+        AppPlace::Workspace(workspace) => {
+            let Some(workspace) = state.workspace_by_id(workspace) else { return Ok(()) };
+            for screen in &workspace.screens {
+                refuse_at(state, screen.id, action)?;
+            }
+            return Ok(());
         }
-        AppPlace::Workspace(workspace) => return refuse_workspace(state, workspace, action),
     };
-    match target {
-        Some((screen, in_first_column)) => refuse_at(state, screen, in_first_column, action),
+    match screen {
+        Some(screen) => refuse_at(state, screen, action),
         None => Ok(()),
     }
-}
-
-fn refuse_workspace(
-    state: &State,
-    workspace: WorkspaceId,
-    action: AppAction,
-) -> anyhow::Result<()> {
-    let Some(workspace) = state.workspace_by_id(workspace) else { return Ok(()) };
-    if action == AppAction::ApplyLayout {
-        // The layout replaces every screen of the workspace.
-        for screen in &workspace.screens {
-            refuse_at(state, screen.id, false, action)?;
-        }
-        return Ok(());
-    }
-    match workspace.active_screen_ref() {
-        Some(screen) => refuse(state, AppPlace::Screen(screen.id), action),
-        None => Ok(()),
-    }
-}
-
-/// A sticky flag change of column `index` of `screen`.
-pub(crate) fn refuse_column(
-    state: &State,
-    screen: ScreenId,
-    index: usize,
-    sticky: Option<ColumnSticky>,
-) -> anyhow::Result<()> {
-    let left = sticky.is_some_and(|sticky| sticky.edge == StickyEdge::Left);
-    refuse_at(state, screen, index == 0, AppAction::Sticky { left })
 }
 
 /// Raw `move-tab`, which reports a refused move as `moved: false`: the tab
@@ -172,219 +125,48 @@ pub(crate) fn refuse_effect(
     let action = match operation {
         Op::TabCreateTerminal | Op::TabCreateBrowser | Op::PaneRun => AppAction::AddTab,
         Op::PaneCreate => AppAction::Split,
-        // A viewport column right of the target's column leaves that column
-        // as it is; every other split adds a pane inside it.
-        Op::PaneSplit
-            if fields.contains_key("viewport_width")
-                && fields.get("direction").and_then(Value::as_str) == Some("right") =>
-        {
-            AppAction::AddColumn
-        }
+        Op::PaneSplit if fields.contains_key("viewport_width") => AppAction::AddColumn,
         Op::PaneSplit => AppAction::Split,
         Op::PaneClose => AppAction::ClosePane,
         Op::TabClose => AppAction::CloseTab,
-        Op::WorkspaceLayoutApply => AppAction::ApplyLayout,
-        Op::ScreenCreate => return refuse_new_screen(state, resolved.workspace),
-        Op::ScreenLayoutUndo => return refuse_undo(state, resolved.screen),
+        Op::WorkspaceLayoutApply | Op::ScreenLayoutUndo => AppAction::ApplyLayout,
+        // An app workspace keeps exactly its one app screen.
+        Op::ScreenCreate => AppAction::Split,
         _ => return Ok(()),
     };
-    let place = match (resolved.tab, resolved.pane, resolved.screen, resolved.workspace) {
-        (Some(tab), ..) => AppPlace::Tab(tab),
-        (None, Some(pane), ..) => AppPlace::Pane(pane),
-        (None, None, Some(screen), _) => AppPlace::Screen(screen),
-        (None, None, None, Some(workspace)) => AppPlace::Workspace(workspace),
-        (None, None, None, None) => return Ok(()),
-    };
-    let place = match (operation, place) {
-        (Op::WorkspaceLayoutApply, _) => match resolved.workspace {
+    let place = match (operation, resolved.tab, resolved.pane, resolved.screen) {
+        (Op::WorkspaceLayoutApply | Op::ScreenCreate, ..) => match resolved.workspace {
             Some(workspace) => AppPlace::Workspace(workspace),
             None => return Ok(()),
         },
-        // A new tab sent to a workspace or screen, not to a pane, goes to an
-        // ordinary column of an appColumn screen ([`new_tab_target`]).
-        (_, AppPlace::Screen(_) | AppPlace::Workspace(_))
-            if action == AppAction::AddTab && routed_screen(state, resolved).is_some() =>
-        {
-            return Ok(());
-        }
-        (_, place) => place,
+        (_, Some(tab), ..) => AppPlace::Tab(tab),
+        (_, None, Some(pane), _) => AppPlace::Pane(pane),
+        (_, None, None, Some(screen)) => AppPlace::Screen(screen),
+        (_, None, None, None) => match resolved.workspace {
+            Some(workspace) => AppPlace::Workspace(workspace),
+            None => return Ok(()),
+        },
     };
     refuse(state, place, action)
 }
 
-/// The appColumn screen a workspace- or screen-level new tab lands on: the
-/// active screen of the resolved workspace, as the creation uses it.
-fn routed_screen(state: &State, resolved: &ResolvedResourceSlots) -> Option<ScreenId> {
-    let workspace = state.workspace_by_id(resolved.workspace?)?;
-    let screen = workspace.active_screen_ref()?;
-    (reducer_kind(state, screen.id) == ScreenKind::AppColumn).then_some(screen.id)
-}
-
-/// A workspace of kind `app` keeps exactly its one app screen.
-fn refuse_new_screen(state: &State, workspace: Option<WorkspaceId>) -> anyhow::Result<()> {
-    let Some(workspace) = workspace.and_then(|workspace| state.workspace_by_id(workspace)) else {
-        return Ok(());
-    };
-    let own = workspace.screens.iter().find(|screen| {
-        state.resource_indexes.screen_apps.get(&screen.id).is_some_and(|app| app.own_workspace)
-    });
-    match own {
-        Some(screen) => Err(rule(state, AppRefusal::ScreenFixed, screen.id)),
-        None => Ok(()),
-    }
-}
-
-/// Layout undo never restores a shape that breaks A1/A2: an app screen has
-/// nothing to undo, and an appColumn screen's undo must restore the same app
-/// column.
-fn refuse_undo(state: &State, screen: Option<ScreenId>) -> anyhow::Result<()> {
-    let Some(screen_id) = screen else { return Ok(()) };
-    let screen = state
-        .workspaces
-        .iter()
-        .flat_map(|workspace| &workspace.screens)
-        .find(|candidate| candidate.id == screen_id);
-    let Some(screen) = screen else { return Ok(()) };
-    match reducer_kind(state, screen_id) {
-        ScreenKind::Workspace => Ok(()),
-        ScreenKind::App => Err(rule(state, AppRefusal::ScreenFixed, screen_id)),
-        ScreenKind::AppColumn => {
-            let Some(entry) = screen.layout_undo.back() else { return Ok(()) };
-            let restored = match entry.before.layout_columns.first() {
-                Some(column) => column.root.pane_ids_vec(),
-                None => entry.before.root.pane_ids_vec(),
-            };
-            if restored == first_column_panes(screen) {
-                Ok(())
-            } else {
-                Err(rule(state, AppRefusal::ColumnLocked, screen_id))
-            }
-        }
-    }
-}
-
 /// Raw `new-tab` and `new-browser-tab` without a pane: the focused pane,
-/// unless it is in an app column; then the creation goes to the focused
-/// workspace and [`new_tab_target`] picks an ordinary column.
+/// unless it is the app pane; then the creation goes to the focused
+/// workspace, whose new tabs go to its companion workspace.
 pub(crate) fn focused_ordinary_pane(state: &State) -> Option<PaneId> {
     let pane = state.active_pane()?;
-    let (screen, in_first) = pane_place(state, pane)?;
-    let in_app_column = in_first && reducer_kind(state, screen) == ScreenKind::AppColumn;
-    (!in_app_column).then_some(pane)
+    let screen = pane_screen(state, pane)?;
+    (reducer_kind(state, screen) == ScreenKind::Workspace).then_some(pane)
 }
 
-/// Pin the app column of every appColumn screen with columns: column 0 is
-/// the app column, pinned left and docked, and no other column holds the
-/// left edge (A2 in the stored model). Runs before every projection and
-/// after every plan's state step, so a column added right of a lone app
-/// column (the base column starts unpinned) is stored pinned.
-pub(crate) fn pin_app_columns(state: &mut State) {
-    let screens = state
-        .resource_indexes
-        .screen_apps
-        .iter()
-        .filter(|(_, app)| app.kind == AppScreenKind::AppColumn)
-        .map(|(screen, _)| *screen)
-        .collect::<Vec<_>>();
-    if screens.is_empty() {
-        return;
-    }
-    for screen in state.workspaces.iter_mut().flat_map(|workspace| workspace.screens.iter_mut()) {
-        if screens.contains(&screen.id) {
-            pin_screen(screen);
-        }
-    }
-}
-
-/// [`pin_app_columns`] for one screen.
-pub(crate) fn pin_screen(screen: &mut crate::model::Screen) {
-    if screen.layout_columns.is_empty() {
-        return;
-    }
-    let left = ColumnSticky { edge: StickyEdge::Left, mode: crate::model::StickyMode::Docked };
-    let pinned = screen.layout_columns.iter().enumerate().all(|(index, column)| {
-        if index == 0 {
-            column.app && column.sticky == Some(left)
-        } else {
-            !column.app && column.sticky.is_none_or(|sticky| sticky.edge != StickyEdge::Left)
-        }
-    });
-    if pinned {
-        return;
-    }
-    for (index, column) in screen.layout_columns.iter_mut().enumerate() {
-        column.app = index == 0;
-        if index == 0 {
-            column.sticky = Some(left);
-        } else if column.sticky.is_some_and(|sticky| sticky.edge == StickyEdge::Left) {
-            column.sticky = None;
-        }
-    }
-    screen.sync_layout_column_projection();
-}
-
-/// The pane a workspace-level new tab goes to, and whether a column was
-/// made for it: [`route_new_tab_pane`] of the workspace's active pane.
-pub(crate) fn new_tab_target(
-    state: &mut State,
-    workspace_index: usize,
-    next_id: impl FnMut() -> u64,
-) -> anyhow::Result<(Option<PaneId>, bool)> {
-    let workspace = &state.workspaces[workspace_index];
-    let Some(active) = workspace.active_screen_ref().map(|screen| screen.active_pane) else {
-        return Ok((None, false));
-    };
-    let (pane, created) = route_new_tab_pane(state, active, next_id)?;
-    Ok((Some(pane), created))
-}
-
-/// Decision 2026-10-04: a new tab is never added to an app column. A new tab
-/// headed for `pane` (a workspace's or screen's focused pane; a creation that
-/// names an app column pane is refused before it gets here) goes to the
-/// first pane of the first ordinary column, or to a new empty pane in a new
-/// ordinary column right of the app column, which the caller fills in the
-/// same lock. Returns the pane and whether a column was made.
-pub(crate) fn route_new_tab_pane(
-    state: &mut State,
-    pane: PaneId,
-    mut next_id: impl FnMut() -> u64,
-) -> anyhow::Result<(PaneId, bool)> {
-    let Some((workspace_index, screen_index)) = state.screen_of(pane) else {
-        return Ok((pane, false));
-    };
-    let screen = &state.workspaces[workspace_index].screens[screen_index];
-    let screen_id = screen.id;
-    if reducer_kind(state, screen_id) != ScreenKind::AppColumn
-        || !first_column_panes(screen).contains(&pane)
-    {
-        return Ok((pane, false));
-    }
-    if let Some(column) = screen.layout_columns.get(1) {
-        return Ok((column.root.first_visible_pane(), false));
-    }
-    let created = next_id();
-    state.insert_pane(crate::model::Pane {
-        id: created,
-        public_id: crate::resource::PanePublicId::random()?,
-        name: None,
-        tabs: Vec::new(),
-        active_tab: 0,
-        active_at: 0,
-        focused_at: 0,
-    });
-    let (column_id, base) = (next_id(), next_id());
-    let screen = &mut state.workspaces[workspace_index].screens[screen_index];
-    let column = crate::model::LayoutColumn::single(column_id, 0.5, created);
-    anyhow::ensure!(
-        screen.insert_layout_column_after(pane, base, column),
-        "the app column disappeared while placing a new tab"
-    );
-    state.resource_indexes.pane_screen.insert(created, screen_id);
-    // The new column's split in the compat chain; a full index rebuild here
-    // would drop the identity of the tab the caller has not placed yet.
-    state.split_screens.insert(column_id, (workspace_index, screen_index, screen_id));
-    pin_screen(&mut state.workspaces[workspace_index].screens[screen_index]);
-    Ok((created, true))
+/// Whether `workspace` is an app workspace: it holds an app screen.
+pub(crate) fn is_app_workspace(state: &State, workspace: WorkspaceId) -> bool {
+    state.workspace_by_id(workspace).is_some_and(|workspace| {
+        workspace
+            .screens
+            .iter()
+            .any(|screen| state.resource_indexes.screen_apps.contains_key(&screen.id))
+    })
 }
 
 /// A layout op of a staged plan, on `model`, the projection of `state`.
@@ -394,51 +176,42 @@ pub(crate) fn refuse_op(
     kind: &LayoutOpKind,
 ) -> anyhow::Result<()> {
     match cmux_layout_reducer::check_app_op(model, kind) {
-        Ok(()) => Ok(()),
         Err(Reject::AppScreenFixed(screen)) => Err(rule(state, AppRefusal::ScreenFixed, screen)),
-        Err(Reject::AppColumnLocked(screen)) => Err(rule(state, AppRefusal::ColumnLocked, screen)),
-        Err(_) => Ok(()),
+        _ => Ok(()),
     }
 }
 
-/// A1/A2 broken by a staged layout change (an introduced
-/// `Violation::AppScreenShape` of the reducer's check): the refusal of the
-/// screen's kind, so a tab-group or screen move keeps the typed error.
+/// A1 broken by a staged layout change (an introduced
+/// `Violation::AppScreenShape` of the reducer's check), so a tab-group or
+/// screen move keeps the typed error.
 pub(crate) fn shape_rule(state: &State, screen: ScreenId) -> anyhow::Error {
-    let refusal = match reducer_kind(state, screen) {
-        ScreenKind::AppColumn => AppRefusal::ColumnLocked,
-        _ => AppRefusal::ScreenFixed,
-    };
-    rule(state, refusal, screen)
+    rule(state, AppRefusal::ScreenFixed, screen)
 }
 
 /// The raw-only mapping of an app reject from the reducer, where the public
 /// screen id is not at hand (the `model_result` check of a respawn drag).
 pub(crate) fn reject_rule(reject: &Reject) -> Option<anyhow::Error> {
     match reject {
-        Reject::AppScreenFixed(_) => {
-            Some(AppRule::new(AppRefusal::ScreenFixed, String::new()).into())
-        }
-        Reject::AppColumnLocked(_) => {
-            Some(AppRule::new(AppRefusal::ColumnLocked, String::new()).into())
-        }
+        Reject::AppScreenFixed(_) => Some(
+            crate::state::app_screens_store::AppRule::new(AppRefusal::ScreenFixed, String::new())
+                .into(),
+        ),
         _ => None,
     }
 }
 
-/// Whether `screen` still has the shape of `app` (A1/A2): column 0 (the
-/// whole screen for an `app` screen) is one pane holding one `app` tab of
-/// the screen's app.
+/// Whether `screen` still has the shape of `app` (A1): one pane, no
+/// columns, holding one `app` tab of the screen's app.
 fn has_shape(
     state: &State,
     screen: &crate::model::Screen,
     app: &ScreenApp,
     app_tabs: &std::collections::HashMap<String, crate::state::app_screens_store::AppTabRecord>,
 ) -> bool {
-    if app.kind == AppScreenKind::App && !screen.layout_columns.is_empty() {
+    if !screen.layout_columns.is_empty() {
         return false;
     }
-    let panes = first_column_panes(screen);
+    let panes = screen.root.pane_ids_vec();
     let [pane] = panes.as_slice() else { return false };
     let Some(pane) = state.panes.get(pane) else { return false };
     let [tab] = pane.tabs.as_slice() else { return false };
@@ -450,9 +223,18 @@ fn has_shape(
     }
 }
 
-/// Overlay the stored screen kinds on the restored state. A row whose
-/// screen is gone, or which lost its shape in an older build, is deleted:
-/// the screen loads as an ordinary screen and keeps every tab.
+impl crate::resource::PublicSlotIndexes {
+    /// Rebuilt indexes keep the screen kinds of `old` whose screen is live.
+    pub(crate) fn keep_screen_apps(mut self, old: &mut Self) -> Self {
+        self.screen_apps = std::mem::take(&mut old.screen_apps);
+        self.screen_apps.retain(|screen, _| self.screen_ids.contains_key(screen));
+        self
+    }
+}
+
+/// Overlay the stored screen kinds on the restored state. Rows whose screen
+/// is gone, or which lost their shape in an older build, are deleted in one
+/// transaction: the screen loads as an ordinary screen and keeps every tab.
 pub(crate) fn load_screen_apps(state: &mut State, connection: &Connection) -> anyhow::Result<()> {
     let rows = read_screen_apps(connection)?;
     if rows.is_empty() {
@@ -478,20 +260,12 @@ pub(crate) fn load_screen_apps(state: &mut State, connection: &Connection) -> an
         });
         match screen.filter(|_| valid) {
             Some(screen) => {
-                let workspace = state.resource_indexes.screen_workspace.get(&screen);
-                let workspace =
-                    workspace.and_then(|id| state.resource_indexes.workspace_ids.get(id));
-                let own_workspace = match workspace {
-                    Some(id) => workspace_app(connection, id.as_str())?.is_some(),
-                    None => false,
-                };
-                loaded.insert(screen, ScreenApp { own_workspace, ..app });
+                loaded.insert(screen, app);
             }
             None => stale.push(public),
         }
     }
     if !stale.is_empty() {
-        // One transaction for every row that lost its screen or its shape.
         let transaction = connection.unchecked_transaction()?;
         for public in &stale {
             transaction
@@ -500,6 +274,5 @@ pub(crate) fn load_screen_apps(state: &mut State, connection: &Connection) -> an
         transaction.commit()?;
     }
     state.resource_indexes.screen_apps = loaded;
-    pin_app_columns(state);
     Ok(())
 }

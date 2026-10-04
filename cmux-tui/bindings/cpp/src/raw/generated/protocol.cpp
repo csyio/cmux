@@ -29063,14 +29063,12 @@ Result<LayoutStack> Codec<LayoutStack>::decode(const Json& value) {
 Result<Json> Codec<ScreenKind>::encode(const ScreenKind& value) {
     switch (value) {
         case ScreenKind::app: return Json(std::string("app"));
-        case ScreenKind::app_column: return Json(std::string("appColumn"));
     }
     return make_error(ErrorCode::invalid_argument, "invalid enum value");
 }
 
 Result<ScreenKind> Codec<ScreenKind>::decode(const Json& value) {
     if (value == Json(std::string("app"))) return ScreenKind::app;
-    if (value == Json(std::string("appColumn"))) return ScreenKind::app_column;
     return make_error(ErrorCode::decode, "unknown ScreenKind value");
 }
 

@@ -16,7 +16,7 @@ const APP: &str = "cmux/race";
 
 #[test]
 fn a_kind_commit_waits_for_the_effect_between_its_check_and_its_commit() {
-    let mux = Mux::new_for_test("app-screen-race", crate::SurfaceOptions::default());
+    let mux = Mux::new_for_test("app-screen-race", SurfaceOptions::default());
     let _ = mux.new_workspace(None, Some((80, 22))).unwrap();
     // An app workspace whose screen has its app tab but no kind row yet.
     mux.resource_create_empty_workspace_selected(
@@ -45,8 +45,7 @@ fn a_kind_commit_waits_for_the_effect_between_its_check_and_its_commit() {
     *mux.viewport_split_after_spawn.lock().unwrap() = Some(Arc::new(move || {
         let racing = hook_mux.clone();
         let handle = std::thread::spawn(move || {
-            let app =
-                ScreenApp { kind: AppScreenKind::App, app: APP.to_string(), own_workspace: true };
+            let app = ScreenApp { kind: AppScreenKind::App, app: APP.to_string() };
             racing.commit_screen_app(screen, app).map(|_| ())
         });
         *hook_racer.lock().unwrap() = Some(handle);

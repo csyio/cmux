@@ -1,8 +1,7 @@
 //! `app-screens-v1` on the raw wire (plans/cmux-next/app-screens.md):
-//! `new-app-tab`, and the screen fields of the raw tree (`kind`, `app`,
-//! `columns[0].app`). A connection that did not negotiate the capability
-//! reads an app tab as a frontend `browser` tab
-//! (conversation_tabs_wire.rs projection).
+//! `new-app-tab`, and the screen fields of the raw tree (`kind`, `app`). A
+//! connection that did not negotiate the capability reads an app tab as a
+//! frontend `browser` tab (conversation_tabs_wire.rs projection).
 
 use std::sync::Arc;
 
@@ -12,7 +11,7 @@ use serde_json::{Value, json};
 use super::{Mux, PaneId, WorkspaceId, paired_surface_size};
 use crate::model::{Screen, State};
 use crate::state::app_screens::AppTabTarget;
-use crate::state::app_screens_store::{AppScreenKind, AppTabRecord};
+use crate::state::app_screens_store::AppTabRecord;
 use crate::workspace_registry::WorkspaceMutation;
 
 /// `new-app-tab`: a tab showing `app` (at `route`), placed like
@@ -59,18 +58,14 @@ pub(super) fn new_app_tab(mux: &Arc<Mux>, params: NewAppTabParams) -> anyhow::Re
     }))
 }
 
-/// The app fields of one raw screen: `kind` and `app` on an app screen, and
-/// on an `appColumn` screen with columns `app` on column 0, the app column
-/// (its left docked `sticky` flag is stored). An ordinary screen gets
-/// nothing.
+/// The app fields of one raw screen: `kind` and `app` on an app screen; an
+/// ordinary screen gets nothing.
 pub(super) fn merge_screen_fields(state: &State, screen: &Screen, value: &mut Value) {
     let Some(app) = state.resource_indexes.screen_apps.get(&screen.id) else { return };
     value["kind"] = json!(app.kind.as_str());
     value["app"] = json!(app.app);
-    if app.kind != AppScreenKind::AppColumn {
-        return;
-    }
-    if let Some(column) = value.get_mut("columns").and_then(|columns| columns.get_mut(0)) {
-        column["app"] = json!(app.app);
-    }
 }
+
+#[cfg(test)]
+#[path = "app_screens_tests.rs"]
+mod tests;
