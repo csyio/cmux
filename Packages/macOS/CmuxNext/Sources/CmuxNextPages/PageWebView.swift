@@ -123,6 +123,7 @@ public final class PageWebView: NSView, PageSurface, WKNavigationDelegate {
         router = PageRouter(descriptor: descriptor, routes: routes)
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        configuration.processPool = PageProcessPool.shared
         if options.fullFrameRate {
             configuration.preferences.setWebKitFeature(PageEngineOptions.near60FPSFeature, enabled: false)
         }
