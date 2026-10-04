@@ -386,7 +386,7 @@ fn v2_swap_and_layout_apply_refuse_the_app_screen() {
 #[test]
 fn ordinary_workspace_with_only_an_app_tab_survives_a_restart() {
     let store = Store::new("only-app-tab");
-    let mut wire = store.open();
+    let wire = store.open();
     let created = wire.v2_ok(
         "workspace.create",
         json!({"name": "New Tab", "initial_content": "empty"}),

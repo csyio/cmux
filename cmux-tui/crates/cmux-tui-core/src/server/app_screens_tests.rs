@@ -159,15 +159,6 @@ impl Wire {
     }
 }
 
-/// Every pane of a raw layout node.
-fn layout_panes(node: &Value) -> Vec<PaneId> {
-    match node["type"].as_str() {
-        Some("leaf") => node["pane"].as_u64().into_iter().collect(),
-        Some("split") => [layout_panes(&node["a"]), layout_panes(&node["b"])].concat(),
-        _ => node["panes"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect(),
-    }
-}
-
 fn screens(tree: &Value) -> Vec<Value> {
     tree["workspaces"]
         .as_array()

@@ -87,7 +87,9 @@ pub fn pane_target(state: &LayoutState, pane: PaneId) -> Option<(ScreenId, Scree
 
 fn check_pane(state: &LayoutState, pane: PaneId, action: AppAction) -> Result<(), Reject> {
     match pane_target(state, pane) {
-        Some((screen, kind)) => check_app_target(kind, action).map_err(|refusal| refusal.on(screen)),
+        Some((screen, kind)) => {
+            check_app_target(kind, action).map_err(|refusal| refusal.on(screen))
+        }
         None => Ok(()),
     }
 }
