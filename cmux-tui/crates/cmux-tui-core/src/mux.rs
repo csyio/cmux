@@ -14397,6 +14397,7 @@ impl Mux {
         size: Option<(u16, u16)>,
     ) -> anyhow::Result<Arc<Surface>> {
         let _creation_handoff = self.resource_creation_handoff.lock().unwrap();
+        crate::debug_spans::mark("new_tab.handoff_locked");
         let selectors = {
             let state = self.state.lock().unwrap();
             let target = match pane {
@@ -14424,12 +14425,15 @@ impl Mux {
         let mut fields = Map::new();
         Self::insert_cell_size(&mut fields, size);
         Self::insert_spawn_options(&mut fields, spawn);
+        crate::debug_spans::mark("new_tab.selectors");
         let commit = self.commit_ordinary_topology_operation(
             ResourceOperation::TabCreateTerminal,
             selectors,
             fields,
         )?;
+        crate::debug_spans::mark("new_tab.committed");
         self.emit_resource_topology_legacy_events(ResourceOperation::TabCreateTerminal, &commit);
+        crate::debug_spans::mark("new_tab.events_emitted");
         self.ordinary_created_surface(&commit)
     }
 
