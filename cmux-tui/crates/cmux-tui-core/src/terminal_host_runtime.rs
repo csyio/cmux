@@ -835,6 +835,7 @@ mod unix {
         Ok(colors)
     }
 
+    mod barrier_sync;
     mod control_responses;
     mod standby;
     use control_responses::ControlResponseWaiter;
@@ -2765,10 +2766,10 @@ mod unix {
             let mut file =
                 OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temporary)?;
             file.write_all(&bytes)?;
-            file.sync_all()?;
+            barrier_sync::barrier_sync(&file)?;
             fs::rename(&temporary, path)?;
             if let Some(parent) = path.parent() {
-                File::open(parent)?.sync_all()?;
+                barrier_sync::barrier_sync_dir(parent)?;
             }
             Ok(())
         })();
@@ -4692,6 +4693,7 @@ mod unix {
     pub(crate) fn prepare_terminal_host_publication_lock(root: &Path) -> anyhow::Result<()> {
         prepare_private_dir(root)?;
         let path = terminal_host_publication_lock_path(root);
+        let existed = fs::symlink_metadata(&path).is_ok();
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -4703,8 +4705,12 @@ mod unix {
             .with_context(|| format!("create terminal-host publication lock {}", path.display()))?;
         validate_terminal_host_publication_lock(root, &path, &file)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        file.sync_all()?;
-        File::open(root)?.sync_all()?;
+        // An existing lock file is already on disk; a new one needs only
+        // its entry ordered (barrier_sync).
+        if !existed {
+            barrier_sync::barrier_sync(&file)?;
+            barrier_sync::barrier_sync_dir(root)?;
+        }
         Ok(())
     }
 
