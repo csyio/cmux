@@ -107,9 +107,11 @@ fn every_safe_transport_operation_has_a_noun_first_path() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(seen, expected, "safe CLI operation coverage drifted from the catalog");
     // Fields only the app that hosts a browser page writes (its record's
-    // owner and history list), and a connection's own capability set; the
-    // CLI never sets them.
+    // owner and history list), a connection's own capability set, and the
+    // app tab a new workspace starts with (app-screens-v1); the CLI never
+    // sets them.
     let app_owned = [
+        ("workspace.create", "initial"),
         ("tab.update", "owner"),
         ("tab.update", "back"),
         ("tab.update", "forward"),
