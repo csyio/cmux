@@ -97,6 +97,9 @@ public actor DaemonConnection {
         continuation.finish()
     }
 
+    /// `client-hello`'s connection id (page relay only); a confirmation token is bound to it.
+    public private(set) var clientConnectionID: String?
+
     public var isReady: Bool {
         if case .ready = phase { return true }
         return false
@@ -246,6 +249,12 @@ public actor DaemonConnection {
     /// Against the wrong or an incompatible daemon the other two are
     /// harmless, and the socket closes.
     private func handshake(_ transport: LineTransport) async throws -> DaemonIdentity {
+        // The page relay says client-hello (request-origin.md); main sends none until P8.
+        if configuration.role == .pageRelay {
+            let (identity, id) = try await PageRelayHandshake.run(transport, timeout: configuration.requestTimeout)
+            clientConnectionID = id
+            return identity
+        }
         let replies = await transport.pipeline([
             PipelinedLine(IdentifyRequest()),
             PipelinedLine(SetClientInfoRequest(name: configuration.clientName, kind: "frontend",

@@ -27,6 +27,11 @@ public struct DaemonConnectionConfiguration: Sendable {
     /// Opens `session.events` after each connect for the daemon's state
     /// resources (`DaemonStore.session`); off sends nothing extra.
     public var sessionEvents: Bool
+    /// The connection's role. `page_relay` sends `client-hello {role: page_relay}` after
+    /// `identify`, no `set-client-info` label and no `subscribe`, and refuses a daemon without
+    /// `origin-claim-v1`: its requests must never run with a client role. `main` sends no hello
+    /// until P8 (request-origin.md).
+    public var role: DaemonClientRole
 
     public init(
         clientName: String = "cmux-next",
@@ -40,7 +45,8 @@ public struct DaemonConnectionConfiguration: Sendable {
         snapshotTimeout: Duration? = .seconds(10),
         spawnTimeout: Duration? = DaemonConnection.defaultSpawnTimeout,
         terminalEnvironment: (@Sendable () async -> [String: String])? = TerminalEnvironment.instance.shared(),
-        sessionEvents: Bool = false
+        sessionEvents: Bool = false,
+        role: DaemonClientRole = .main
     ) {
         self.clientName = clientName
         self.requiredCapabilities = requiredCapabilities
@@ -54,5 +60,6 @@ public struct DaemonConnectionConfiguration: Sendable {
         self.spawnTimeout = requestTimeout == nil ? nil : spawnTimeout
         self.terminalEnvironment = terminalEnvironment
         self.sessionEvents = sessionEvents
+        self.role = role
     }
 }
