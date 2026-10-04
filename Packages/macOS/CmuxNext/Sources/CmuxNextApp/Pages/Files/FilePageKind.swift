@@ -15,7 +15,7 @@ nonisolated enum FilePageKind: String, Sendable, CaseIterable {
     case markdown
     case editor
 
-    var descriptor: PageDescriptor {
+    @MainActor var descriptor: PageDescriptor {
         switch self {
         case .markdown: .markdown
         case .editor: .editor
@@ -38,9 +38,9 @@ nonisolated enum FilePageKind: String, Sendable, CaseIterable {
     }
 
     /// `cmux.markdown`, `cmux.editor`: the op prefix without its dot.
-    var namespace: String { descriptor.id }
+    @MainActor var namespace: String { descriptor.id }
 
-    func op(_ name: String) -> String { "\(namespace).\(name)" }
+    @MainActor func op(_ name: String) -> String { "\(namespace).\(name)" }
 
     /// The page's settings section (`markdown.*`, `editor.*`) and its `<config dir>/<section>/theme.css`.
     var section: String { rawValue }
