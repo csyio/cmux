@@ -7,4 +7,17 @@ public import WebKit
 @MainActor
 public enum PageProcessPool {
     public static let shared = WKProcessPool()
+
+    #if DEBUG
+    /// The claim bench's "before" mode: a new pool per view (the cost the shared pool removes).
+    static var separatePoolsForBench = false
+    #endif
+
+    /// The pool a new page view uses.
+    static var forNewView: WKProcessPool {
+        #if DEBUG
+        if separatePoolsForBench { return WKProcessPool() }
+        #endif
+        return shared
+    }
 }

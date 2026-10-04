@@ -1,5 +1,5 @@
 import AppKit
-import CmuxNextPages
+@testable import CmuxNextPages
 import CmuxNextSettings
 import Foundation
 import QuartzCore
@@ -58,6 +58,22 @@ struct PageShellBenchTests {
         let parked = panel(x: 40)
         let other = panel(x: 420)
         defer { parked.close(); other.close() }
+        var all: [String: Any] = [:]
+        // Shared pool first (as shipped), then a pool per host (the cost before R81's shared pool).
+        for (mode, separate) in [("sharedPool", false), ("poolPerHost", true)] {
+            PageProcessPool.separatePoolsForBench = separate
+            defer { PageProcessPool.separatePoolsForBench = false }
+            all[mode] = try await run(parked: parked, other: other)
+        }
+        let json = try JSONSerialization.data(withJSONObject: all, options: [.sortedKeys])
+        let line = "PAGE_SHELL_BENCH " + String(decoding: json, as: UTF8.self)
+        print(line)
+        if let dir = ProcessInfo.processInfo.environment["NX_ARTIFACTS"] {
+            try? Data(line.utf8).write(to: URL(fileURLWithPath: dir).appending(path: "page-shell-bench.json"))
+        }
+    }
+
+    func run(parked: NSPanel, other: NSPanel) async throws -> [String: Any] {
         var policy = PageHostPool.Policy()
         policy.idleInput = .milliseconds(5)
         let pool = PageHostPool(policy: policy, activity: { 0 }, isTrackingMenu: { false })
@@ -103,12 +119,7 @@ struct PageShellBenchTests {
         results["parkMs"] = Self.stats(pool.spans.filter { $0.name == "pool.makeSpare.park" }.map(\.milliseconds))
         results["webContentFootprintMB"] = webContentMB ?? -1
         results["testProcessFootprintMB"] = ["before": testProcessBefore ?? -1, "afterOneHost": testProcessAfter ?? -1]
-        let json = try JSONSerialization.data(withJSONObject: results, options: [.sortedKeys])
-        let line = "PAGE_SHELL_BENCH " + String(decoding: json, as: UTF8.self)
-        print(line)
-        if let dir = ProcessInfo.processInfo.environment["NX_ARTIFACTS"] {
-            try? Data(line.utf8).write(to: URL(fileURLWithPath: dir).appending(path: "page-shell-bench.json"))
-        }
         pool.dropSpare()
+        return results
     }
 }

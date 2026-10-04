@@ -24,10 +24,10 @@ public protocol PageSurface: AnyObject {
 public final class PageWebView: NSView, PageSurface, WKNavigationDelegate {
     /// The page the view serves now: its ops (``router``), commands and accessibility id. A pooled
     /// host's claim or retarget changes it (``retarget(descriptor:routes:dynamicResources:)``).
-    public private(set) var descriptor: PageDescriptor
+    public internal(set) var descriptor: PageDescriptor
     /// The document's own page (its origin): the trust check reads it. The same as ``descriptor``
     /// except while a shell page is claimed (then ``PageDescriptor/shell``).
-    public private(set) var servedDescriptor: PageDescriptor
+    public internal(set) var servedDescriptor: PageDescriptor
     public let router: PageRouter
     let webView: PageEngineView
     /// The WebKit view, for WebKit-only callers (focus, debug verbs). Engine-neutral code uses the
@@ -123,7 +123,7 @@ public final class PageWebView: NSView, PageSurface, WKNavigationDelegate {
         router = PageRouter(descriptor: descriptor, routes: routes)
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        configuration.processPool = PageProcessPool.shared
+        configuration.processPool = PageProcessPool.forNewView
         if options.fullFrameRate {
             configuration.preferences.setWebKitFeature(PageEngineOptions.near60FPSFeature, enabled: false)
         }

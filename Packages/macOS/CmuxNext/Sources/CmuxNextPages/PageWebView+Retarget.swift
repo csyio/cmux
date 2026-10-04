@@ -1,7 +1,7 @@
-import AppKit
+public import AppKit
 import CmuxNextDesign
-import CmuxNextSettings
-import WebKit
+public import CmuxNextSettings
+public import WebKit
 
 /// Holds the pooled view for its scheme handler, which is made before the view exists.
 final class PageServedOwner {
