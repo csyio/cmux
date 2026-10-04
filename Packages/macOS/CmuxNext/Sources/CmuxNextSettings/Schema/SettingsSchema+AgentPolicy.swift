@@ -109,6 +109,8 @@ extension SettingsSchema {
         "notifications.attention.showOnTab",
         "notifications.attention.showOnSidebar",
         "labs.previewFeatures",
+        "updates.notify",
+        "updates.quietHours",
     ]
 
     /// Keys an agent may not set or reset, with the reason.
@@ -120,6 +122,12 @@ extension SettingsSchema {
         "feed.github.pollIntervalSeconds": .network,
         "browser.remoteLocalhost": .network,
         "app.quitBehavior": .destructive,
+        // Update checks and downloads reach the network; install on quit
+        // replaces the app.
+        "updates.checkAutomatically": .network,
+        "updates.checkIntervalSeconds": .network,
+        "updates.downloadAutomatically": .network,
+        "updates.installOnQuit": .destructive,
     ]
 
     /// True when an agent may change `descriptor`, false when it may not, nil
