@@ -233,6 +233,11 @@ public final class PageHostPool {
         measure("pool.makeSpare.park") { park(host, in: content) }
         spare = host
         await host.waitUntilLoaded()
+        guard host.isLoaded else {
+            // The shell did not load (a missing build): no spare; callers open cold.
+            if spare === host { dropSpare() }
+            return
+        }
         await host.preloadShellPages()
         guard spare === host else { return }
         spareReady = true

@@ -12,7 +12,7 @@ import WebKit
 /// Prints one `PAGE_SHELL_BENCH {json}` line and writes it to $NX_ARTIFACTS when set. Two small
 /// non-activating panels; the test never activates the app.
 @MainActor
-@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["CMUX_PAGE_SHELL_BENCH"] == "1"))
+@Suite(.serialized, .timeLimit(.minutes(5)), .enabled(if: ProcessInfo.processInfo.environment["CMUX_PAGE_SHELL_BENCH"] == "1"))
 struct PageShellBenchTests {
     static let rounds = 20
 
@@ -87,6 +87,7 @@ struct PageShellBenchTests {
         pool.follow(parked)
         pool.noteLikely()
         await spare()
+        print("PAGE_SHELL_BENCH_PROGRESS spare ready, loaded \(pool.spareHost?.isLoaded == true)")
         let spareHost = try #require(pool.spareHost)
         let webPID = (spareHost.webKitView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value
         let webContentMB = webPID.flatMap { Self.footprintMB($0) }
@@ -107,9 +108,14 @@ struct PageShellBenchTests {
                 }
                 claimMs.append((CACurrentMediaTime() - start) * 1000)
                 let mounted = try await host.webKitView.callAsyncJavaScript(
-                    "await new Promise((r) => requestAnimationFrame(() => r())); return document.querySelectorAll('.icon-cell').length",
+                    """
+                    const frame = await Promise.race([new Promise((r) => requestAnimationFrame(() => r(true))),
+                                                      new Promise((r) => setTimeout(() => r(false), 2000))]);
+                    return frame ? document.querySelectorAll('.icon-cell').length : -1;
+                    """,
                     contentWorld: .page) as? Int ?? 0
                 firstFrameMs.append((CACurrentMediaTime() - start) * 1000)
+                #expect(mounted != -1, "no animation frame in 2 s (window not on screen?)")
                 #expect(mounted > 0, "the picker rendered no cells")
                 pool.release(host)
             }

@@ -210,9 +210,7 @@ public final class PageWebView: NSView, PageSurface, WKNavigationDelegate {
     public func close() {
         router.close()
         bridge.uninstall()
-        let waiters = loadWaiters
-        loadWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
+        resumeLoadWaiters()
     }
 
     func receive(_ message: PageHostMessage) async -> Any? {
@@ -290,6 +288,20 @@ public final class PageWebView: NSView, PageSurface, WKNavigationDelegate {
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loaded = true
         applyTheme(force: true)
+        resumeLoadWaiters()
+    }
+
+    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        logger.error("page \(self.servedDescriptor.id, privacy: .public) failed to load")
+        resumeLoadWaiters()
+    }
+
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        logger.error("page \(self.servedDescriptor.id, privacy: .public) failed to load")
+        resumeLoadWaiters()
+    }
+
+    func resumeLoadWaiters() {
         let waiters = loadWaiters
         loadWaiters.removeAll()
         for waiter in waiters { waiter.resume() }

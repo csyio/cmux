@@ -90,7 +90,8 @@ extension PageWebView {
     /// Whether the document finished loading (its first `didFinish`).
     public var isLoaded: Bool { loaded }
 
-    /// Returns when the document has finished loading (at once when it has), or when the view closes.
+    /// Returns when the document has finished loading (at once when it has), failed to load, or
+    /// the view closed; ``isLoaded`` tells which.
     public func waitUntilLoaded() async {
         guard !loaded else { return }
         await withCheckedContinuation { loadWaiters.append($0) }

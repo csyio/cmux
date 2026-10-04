@@ -92,7 +92,7 @@ import WebKit
         #expect(reply.response.value(forHTTPHeaderField: "Content-Security-Policy") == PageDescriptor.shell.csp.header)
         #expect(source.requests.map(\.path) == [["star.fill.png"]])
         // Without the claim the prefix is a plain (missing) file.
-        let bare = handler(current: .shell, source: source, roots: ["cmux.shell": root])
+        let bare = self.handler(current: .shell, source: source, roots: ["cmux.shell": root])
         #expect(await bare.reply(to: Self.url("cmux-page://cmux.shell/__symbol/star.fill.png")) == nil)
     }
 

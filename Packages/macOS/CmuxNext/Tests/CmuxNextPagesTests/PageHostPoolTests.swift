@@ -10,7 +10,7 @@ import WebKit
 /// can, a global, a pending call and a subscription; page B must see none of it, after a reset in
 /// the same host and on a new host after a release.
 @MainActor
-@Suite(.serialized) struct PageHostPoolTests {
+@Suite(.serialized, .timeLimit(.minutes(3))) struct PageHostPoolTests {
     /// Serves the probe's namespace: `slow` stays pending, `events` is a stream it can still emit on.
     final class ProbeProvider: PageProvider {
         var calls: [String] = []
