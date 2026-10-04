@@ -5338,7 +5338,24 @@ fn template_terminal_host_is_adopted_by_a_fresh_identity_daemon() {
         &harness.socket,
         serde_json::json!({"id": 9, "cmd": "close-terminal", "terminal_id": terminal_id, "terminal_incarnation": incarnation}),
     );
-    wait_for_no_host_records(&harness.host_root());
+    let deadline = Instant::now() + test_timeout(Duration::from_secs(10));
+    while Instant::now() < deadline {
+        if load_terminal_host_records(&harness.host_root()).unwrap().is_empty()
+            && load_terminal_host_exit_records(&harness.host_root()).unwrap().is_empty()
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let records = load_terminal_host_records(&harness.host_root()).unwrap();
+    let leftover: Vec<_> = records.iter().map(|(_, r)| r.terminal_id.clone()).collect();
+    let resolved: Vec<_> = leftover
+        .iter()
+        .map(|id| request_response(&harness.socket, serde_json::json!({"id": 61, "cmd": "resolve-terminal", "terminal_id": id})))
+        .collect();
+    let all = request_response(&harness.socket, serde_json::json!({"id": 62, "cmd": "list-workspaces"}));
+    let alive: Vec<_> = records.iter().map(|(_, r)| (r.host_pid, std::path::Path::new(&format!("/proc/{}", r.host_pid)).exists())).collect();
+    panic!("DIAG adopted={terminal_id} run={} leftover={leftover:?} alive={alive:?} resolved={resolved:?} workspaces={all}", run["value"]["terminal_id"]);
 }
 
 /// Wait for the template binding, then check that it names the one listed
