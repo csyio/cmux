@@ -1,5 +1,5 @@
 {
-  "catalog_sha256": "59151cc8af786af5f4294e18a8bc37207965839e363bf861d5c16e8248d263eb",
+  "catalog_sha256": "cb0a39cf3a438babc4b4ef6a44d3a9064015ba1e471e9798272b144562ba700b",
   "operations": {
     "agent.list": {
       "class": "read"
@@ -364,6 +364,9 @@
     "tab.close": {
       "class": "mutation"
     },
+    "tab.create_app": {
+      "class": "mutation"
+    },
     "tab.create_browser": {
       "class": "mutation"
     },
@@ -503,6 +506,9 @@
       "class": "mutation"
     },
     "workspace.create": {
+      "class": "mutation"
+    },
+    "workspace.ensure_app": {
       "class": "mutation"
     },
     "workspace.ensure_home": {

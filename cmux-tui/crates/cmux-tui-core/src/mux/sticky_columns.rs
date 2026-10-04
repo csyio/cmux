@@ -33,6 +33,9 @@ pub enum ColumnStickyError {
     NoSuchColumn { index: usize },
     /// The durable commit failed; details are reported as a status event.
     CommitFailed,
+    /// `app-screens-v1`: the change would move or unpin an app column, or
+    /// touch an app screen (`app-column-locked`, `app-screen-fixed`).
+    AppRule { code: &'static str, message: String },
 }
 
 impl ColumnStickyError {
@@ -48,6 +51,7 @@ impl ColumnStickyError {
             Self::LastScrollingColumn => Some(Self::LAST_SCROLLING_CODE),
             Self::InvalidArgument { .. } => Some(Self::INVALID_ARGUMENT_CODE),
             Self::CommitFailed => None,
+            Self::AppRule { code, .. } => Some(code),
         }
     }
 }
@@ -67,6 +71,7 @@ impl fmt::Display for ColumnStickyError {
             }
             Self::NoSuchColumn { index } => write!(formatter, "no viewport column {index}"),
             Self::CommitFailed => formatter.write_str("could not persist the sticky column"),
+            Self::AppRule { message, .. } => formatter.write_str(message),
         }
     }
 }
@@ -182,6 +187,23 @@ fn sticky_column_location(
     Ok((workspace, screen, column))
 }
 
+/// The app rules of a sticky change of `pane`'s column (`app-screens-v1`).
+fn refuse_app_column(
+    state: &State,
+    pane: PaneId,
+    sticky: Option<ColumnSticky>,
+) -> Result<(), ColumnStickyError> {
+    let Some((workspace, screen)) = state.screen_of(pane) else { return Ok(()) };
+    let screen = &state.workspaces[workspace].screens[screen];
+    let index = screen.layout_columns.iter().position(|column| column.root.contains(pane));
+    crate::state::app_rules::refuse_column(state, screen.id, index.unwrap_or(0), sticky).map_err(
+        |error| ColumnStickyError::AppRule {
+            code: crate::state::app_screens_store::raw_error_code(&error).unwrap_or_default(),
+            message: error.to_string(),
+        },
+    )
+}
+
 impl Mux {
     /// `set-column-sticky`: pin the viewport column containing `pane` to an
     /// edge, or clear its flag with `None`. `transaction` is the requesting
@@ -198,6 +220,7 @@ impl Mux {
             transaction,
         });
         let unchanged = self.with_state(|state| {
+            refuse_app_column(state, pane, sticky)?;
             // A screen stored as one split tree is one implicit column: the
             // only column cannot be pinned, and unpinning it changes nothing.
             if let Some((workspace, screen)) = state.screen_of(pane) {

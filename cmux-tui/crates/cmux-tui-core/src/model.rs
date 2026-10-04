@@ -930,6 +930,8 @@ impl State {
                 indexes.split_ids.insert(split, public_id);
             }
         }
+        indexes.screen_apps = std::mem::take(&mut self.resource_indexes.screen_apps);
+        indexes.screen_apps.retain(|screen, _| indexes.screen_ids.contains_key(screen));
         self.resource_indexes = indexes;
     }
 

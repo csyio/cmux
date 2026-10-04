@@ -275,6 +275,7 @@ MODEL_BY_PATH = {
     'commands/move-workspace/request': models.MoveWorkspaceRequest,
     'commands/move-workspace-group/request': models.MoveWorkspaceGroupRequest,
     'commands/move-workspace-to-group/request': models.MoveWorkspaceToGroupRequest,
+    'commands/new-app-tab/request': models.NewAppTabRequest,
     'commands/new-browser-tab/request': models.NewBrowserTabRequest,
     'commands/new-conversation-tab/request': models.NewConversationTabRequest,
     'commands/new-conversation-tab/result': models.NewConversationTabResult,

@@ -7,7 +7,7 @@ const client_runtime = @import("../client.zig");
 
 pub const schema_version: u16 = 2;
 pub const mux_protocol: u16 = 12;
-pub const ir_sha256 = "3d68350e643abae41960f97711e728cf3681b9fc60044ae1fc478ec89addd2a4";
+pub const ir_sha256 = "9efd2cbaa76a17aedfcce9ddb6d2642121da1e3e3a3fb3409f4568b04d63b3ee";
 
 pub const AgentRecord = struct {
     session: wire.Nullable([]const u8),
@@ -1272,10 +1272,30 @@ pub const RunResult = struct {
     workspace: wire.Nullable(Id),
 };
 
+pub const ScreenKind = enum {
+    app,
+    app_column,
+
+    pub fn fromWire(value: []const u8) !@This() {
+        if (std.mem.eql(u8, value, "app")) return .app;
+        if (std.mem.eql(u8, value, "appColumn")) return .app_column;
+        return error.UnknownEnumValue;
+    }
+
+    pub fn toWire(self: @This()) []const u8 {
+        return switch (self) {
+            .app => "app",
+            .app_column => "appColumn",
+        };
+    }
+};
+
 pub const Screen = struct {
     active: bool,
     active_pane: Id,
+    app: ?[]const u8 = null,
     id: Id,
+    kind: ?ScreenKind = null,
     layout: Layout,
     name: wire.Nullable([]const u8),
     panes: []const Pane,
@@ -1283,6 +1303,8 @@ pub const Screen = struct {
     zoomed_pane: wire.Nullable(Id),
 
     pub const cmux_wire_optional_nonnull_fields = [_][]const u8{
+        "app",
+        "kind",
         "short_id",
     };
 };
@@ -1681,11 +1703,13 @@ pub const TabKind = enum {
     pty,
     browser,
     conversation,
+    app,
 
     pub fn fromWire(value: []const u8) !@This() {
         if (std.mem.eql(u8, value, "pty")) return .pty;
         if (std.mem.eql(u8, value, "browser")) return .browser;
         if (std.mem.eql(u8, value, "conversation")) return .conversation;
+        if (std.mem.eql(u8, value, "app")) return .app;
         return error.UnknownEnumValue;
     }
 
@@ -1694,11 +1718,13 @@ pub const TabKind = enum {
             .pty => "pty",
             .browser => "browser",
             .conversation => "conversation",
+            .app => "app",
         };
     }
 };
 
 pub const Tab = struct {
+    app: ?[]const u8 = null,
     browser_error: wire.Field([]const u8) = .absent,
     browser_frames_stalled: wire.Field(bool) = .absent,
     browser_source: wire.Nullable(TabBrowserSource),
@@ -1707,6 +1733,7 @@ pub const Tab = struct {
     kind: TabKind,
     name: wire.Nullable([]const u8),
     notification: wire.Field(NotificationMarker) = .absent,
+    route: ?[]const u8 = null,
     short_id: ?[]const u8 = null,
     size: wire.Nullable(Size),
     supports_clear_history_key_fallback: ?bool = null,
@@ -1717,6 +1744,8 @@ pub const Tab = struct {
     title: []const u8,
 
     pub const cmux_wire_optional_nonnull_fields = [_][]const u8{
+        "app",
+        "route",
         "short_id",
         "supports_clear_history_key_fallback",
     };
@@ -4945,6 +4974,31 @@ pub fn moveWorkspaceToGroup(client: anytype, request: MoveWorkspaceToGroupReques
             .authority = "control",
             .since = 12,
             .capability = "workspace-groups-v1",
+        },
+        request,
+    );
+}
+
+pub const NewAppTabRequest = struct {
+    app: []const u8,
+    cols: wire.Field(u16) = .absent,
+    idempotency_key: wire.Field([]const u8) = .absent,
+    pane: wire.Field(Id) = .absent,
+    route: wire.Field([]const u8) = .absent,
+    rows: wire.Field(u16) = .absent,
+    workspace: wire.Field(Id) = .absent,
+};
+
+pub const NewAppTabResult = JsonValue;
+
+pub fn newAppTab(client: anytype, request: NewAppTabRequest) !wire.Decoded(NewAppTabResult) {
+    return client.callTyped(
+        NewAppTabResult,
+        .{
+            .name = "new-app-tab",
+            .authority = "control",
+            .since = 12,
+            .capability = "app-screens-v1",
         },
         request,
     );
@@ -8392,7 +8446,7 @@ pub const CommandDescriptor = struct {
     stream: ?[]const u8,
 };
 
-pub const command_count: usize = 213;
+pub const command_count: usize = 214;
 pub const commands = [_]CommandDescriptor{
     .{ .name = "ack-tab-notifications", .authority = "control", .since = 12, .capability = "notification-ack-v1", .stream = null },
     .{ .name = "add-screens-to-screen-group", .authority = "control", .since = 12, .capability = "screen-groups-v1", .stream = null },
@@ -8502,6 +8556,7 @@ pub const commands = [_]CommandDescriptor{
     .{ .name = "move-workspace", .authority = "control", .since = 5, .capability = null, .stream = null },
     .{ .name = "move-workspace-group", .authority = "control", .since = 12, .capability = "workspace-groups-v1", .stream = null },
     .{ .name = "move-workspace-to-group", .authority = "control", .since = 12, .capability = "workspace-groups-v1", .stream = null },
+    .{ .name = "new-app-tab", .authority = "control", .since = 12, .capability = "app-screens-v1", .stream = null },
     .{ .name = "new-browser-tab", .authority = "control", .since = 5, .capability = null, .stream = null },
     .{ .name = "new-conversation-tab", .authority = "control", .since = 12, .capability = "conversation-tabs-v1", .stream = null },
     .{ .name = "new-frontend-browser-tab", .authority = "control", .since = 12, .capability = "frontend-browser-tabs-v1", .stream = null },

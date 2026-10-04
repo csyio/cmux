@@ -67,8 +67,9 @@ pub use terminal_reap::{
     validate_terminal_reap_grace,
 };
 
+use crate::state::app_rules;
 use public_projections::{RestoredPublicProjections, restore_public_projections};
-use registry_viewport::restore_registry_viewport;
+use registry_viewport::{restore_layout_node, restore_registry_viewport};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
@@ -2975,6 +2976,7 @@ impl Mux {
         );
         let RestoredResourceState { mut state, next_id, contents } =
             restore_resource_state(snapshot, topology)?;
+        app_rules::load_screen_apps(&mut state, &registry.connection)?;
         let RestoredPublicProjections {
             default_colors,
             has_terminal_defaults,
@@ -14419,7 +14421,7 @@ impl Mux {
                     }
                     Some(id)
                 }
-                None => state.active_pane(),
+                None => app_rules::focused_ordinary_pane(&state),
             };
             if let Some(target) = target {
                 drop(state);
@@ -14775,6 +14777,7 @@ impl Mux {
         let notifications = self.tree_decorations();
         let active_at = self.next_active_at();
         let mut rollback_removed = Vec::new();
+        let mut column_added = false;
         let attached = {
             let mut state = self.state.lock().unwrap();
             let result = (|| -> anyhow::Result<_> {
@@ -14785,8 +14788,9 @@ impl Mux {
                 let wi = state
                     .workspace_index(workspace)
                     .context("workspace disappeared while creating terminal")?;
-                let target =
-                    state.workspaces[wi].active_screen_ref().map(|screen| screen.active_pane);
+                let (target, routed) =
+                    app_rules::new_tab_target(&mut state, wi, || self.next_id())?;
+                column_added = routed;
                 if let Some(target) = target {
                     let (_, si) = state
                         .screen_of(target)
@@ -14901,6 +14905,9 @@ impl Mux {
         };
         drop(pending_surface);
         self.emit_tree_delta(attached.1, attached.2);
+        if column_added {
+            self.emit(MuxEvent::TreeChanged);
+        }
         drop(workspace_lifecycle);
         Ok((attached.0, surface, attached.3))
     }
@@ -14969,7 +14976,7 @@ impl Mux {
                     }
                     Some(id)
                 }
-                None => state.active_pane(),
+                None => app_rules::focused_ordinary_pane(&state),
             };
             if let Some(target) = target {
                 drop(state);
@@ -15284,6 +15291,7 @@ impl Mux {
         let pending_surface = self.pending_workspace_surface(surface.id);
         let notifications = self.tree_decorations();
         let active_at = self.next_active_at();
+        let mut column_added = false;
         let (delta, selection_resync) = {
             let mut state = self.state.lock().unwrap();
             let Some(wi) = state.workspace_index(workspace) else {
@@ -15291,7 +15299,8 @@ impl Mux {
                 surface.kill();
                 anyhow::bail!("workspace disappeared while creating browser tab");
             };
-            let target = state.workspaces[wi].active_screen_ref().map(|screen| screen.active_pane);
+            let (target, routed) = app_rules::new_tab_target(&mut state, wi, || self.next_id())?;
+            column_added = routed;
             if let Some(target) = target {
                 let Some((_, si)) = state.screen_of(target) else {
                     state.surfaces.remove(&surface.id);
@@ -15375,6 +15384,9 @@ impl Mux {
         };
         drop(pending_surface);
         self.emit_tree_delta(delta, selection_resync);
+        if column_added {
+            self.emit(MuxEvent::TreeChanged);
+        }
         drop(workspace_lifecycle);
         self.reap_if_dead(&surface);
         Ok(surface)
@@ -15608,7 +15620,10 @@ impl Mux {
                 // Caller input errors stay visible; spawn failures keep the
                 // generic message.
                 let message = error.to_string();
-                if message.starts_with("bad request") || message.starts_with("terminal_id_exists") {
+                if message.starts_with("bad request")
+                    || message.starts_with("terminal_id_exists")
+                    || crate::state::app_screens_store::raw_error_code(&error).is_some()
+                {
                     return error;
                 }
                 eprintln!("cmux-tui: viewport pane PTY creation failed: {error:#}");
@@ -17508,7 +17523,10 @@ impl Mux {
             {
                 anyhow::bail!("unknown workspace {id}");
             }
-            workspace.or_else(|| state.workspaces.get(state.active_workspace).map(|ws| ws.id))
+            let target =
+                workspace.or_else(|| state.workspaces.get(state.active_workspace).map(|ws| ws.id));
+            app_rules::refuse_apply_layout(&state, target)?;
+            target
         };
         let (target_workspace, created_workspace) = match target_workspace {
             Some(workspace) => (workspace, false),
@@ -19468,97 +19486,6 @@ fn restore_resource_state(
         },
         next_id,
         contents,
-    })
-}
-
-fn restore_layout_node(
-    node: &RegistryLayoutNode,
-    panes: &HashMap<PanePublicId, PaneId>,
-    splits: &mut HashMap<SplitPublicId, SplitId>,
-    allocate: &mut impl FnMut() -> anyhow::Result<u64>,
-) -> anyhow::Result<Node> {
-    Ok(match node {
-        RegistryLayoutNode::Leaf { pane } => Node::Leaf(
-            *panes.get(pane).ok_or_else(|| anyhow::anyhow!("layout has unknown pane {pane}"))?,
-        ),
-        RegistryLayoutNode::Split { split, direction, ratio, first, second } => {
-            anyhow::ensure!(!splits.contains_key(split), "split {split} appears more than once");
-            let id = allocate()?;
-            splits.insert(split.clone(), id);
-            let dir = match direction.as_str() {
-                "right" => SplitDir::Right,
-                "down" => SplitDir::Down,
-                _ => anyhow::bail!("split {split} has invalid direction {direction:?}"),
-            };
-            Node::Split {
-                id,
-                dir,
-                ratio: *ratio,
-                a: Box::new(restore_layout_node(first, panes, splits, allocate)?),
-                b: Box::new(restore_layout_node(second, panes, splits, allocate)?),
-            }
-        }
-        RegistryLayoutNode::Stack { panes: members, expanded } => {
-            let members = members
-                .iter()
-                .map(|pane| {
-                    panes
-                        .get(pane)
-                        .copied()
-                        .ok_or_else(|| anyhow::anyhow!("stack has unknown pane {pane}"))
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            let expanded = *panes
-                .get(expanded)
-                .ok_or_else(|| anyhow::anyhow!("stack has unknown expanded pane {expanded}"))?;
-            Node::stack_with_expanded(members, expanded)
-                .ok_or_else(|| anyhow::anyhow!("stored stack is empty or has invalid selection"))?
-        }
-    })
-}
-
-fn restore_layout_node_from_known_splits(
-    node: &RegistryLayoutNode,
-    panes: &HashMap<PanePublicId, PaneId>,
-    splits: &HashMap<SplitPublicId, SplitId>,
-) -> anyhow::Result<Node> {
-    Ok(match node {
-        RegistryLayoutNode::Leaf { pane } => Node::Leaf(
-            *panes.get(pane).ok_or_else(|| anyhow::anyhow!("layout has unknown pane {pane}"))?,
-        ),
-        RegistryLayoutNode::Split { split, direction, ratio, first, second } => {
-            let id = *splits
-                .get(split)
-                .ok_or_else(|| anyhow::anyhow!("layout has unknown split {split}"))?;
-            let dir = match direction.as_str() {
-                "right" => SplitDir::Right,
-                "down" => SplitDir::Down,
-                _ => anyhow::bail!("split {split} has invalid direction {direction:?}"),
-            };
-            Node::Split {
-                id,
-                dir,
-                ratio: *ratio,
-                a: Box::new(restore_layout_node_from_known_splits(first, panes, splits)?),
-                b: Box::new(restore_layout_node_from_known_splits(second, panes, splits)?),
-            }
-        }
-        RegistryLayoutNode::Stack { panes: members, expanded } => {
-            let members = members
-                .iter()
-                .map(|pane| {
-                    panes
-                        .get(pane)
-                        .copied()
-                        .ok_or_else(|| anyhow::anyhow!("stack has unknown pane {pane}"))
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            let expanded = *panes
-                .get(expanded)
-                .ok_or_else(|| anyhow::anyhow!("stack has unknown expanded pane {expanded}"))?;
-            Node::stack_with_expanded(members, expanded)
-                .ok_or_else(|| anyhow::anyhow!("stored stack is empty or has invalid selection"))?
-        }
     })
 }
 

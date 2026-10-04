@@ -185,6 +185,8 @@ pub enum ResourceOperation {
     WorkspaceCreate,
     #[serde(rename = "workspace.ensure_home")]
     WorkspaceEnsureHome,
+    #[serde(rename = "workspace.ensure_app")]
+    WorkspaceEnsureApp,
     #[serde(rename = "workspace.rename")]
     WorkspaceRename,
     #[serde(rename = "workspace.move")]
@@ -251,6 +253,8 @@ pub enum ResourceOperation {
     TabCreateTerminal,
     #[serde(rename = "tab.create_browser")]
     TabCreateBrowser,
+    #[serde(rename = "tab.create_app")]
+    TabCreateApp,
     #[serde(rename = "tab.rename")]
     TabRename,
     #[serde(rename = "tab.move")]
@@ -603,9 +607,13 @@ impl ResourceOperation {
     }
 }
 
+mod error_codes;
 #[cfg(test)]
 #[path = "resource/wire_name_tests.rs"]
 mod resource_operation_wire_name_tests;
+#[cfg(test)]
+pub(crate) use error_codes::RESOURCE_ERROR_CODES;
+pub(crate) use error_codes::is_catalog_error_code;
 mod scope;
 mod wire_decimal;
 mod wire_name;
@@ -1066,33 +1074,6 @@ impl ResourceError {
     }
 }
 
-pub(crate) const RESOURCE_ERROR_CODES: &[&str] = &[
-    "confirmation.required",
-    "creation.conflict",
-    "cursor.gap",
-    "cursor.invalid",
-    "home.not_closable",
-    "home.pinned_first",
-    "idempotency.conflict",
-    "local.io",
-    "mutation.indeterminate",
-    "operation.failed",
-    "operation.unsupported",
-    "resource.not_found",
-    "revision.conflict",
-    "selector.ambiguous",
-    "selector.invalid",
-    "selector.not_found",
-    "selector.wrong_parent",
-    "terminal.closed",
-    "transport.closed",
-    "validation.invalid",
-];
-
-pub(crate) fn is_catalog_error_code(code: &str) -> bool {
-    RESOURCE_ERROR_CODES.contains(&code)
-}
-
 fn error_catalog() -> &'static Value {
     static CATALOG: OnceLock<Value> = OnceLock::new();
     CATALOG.get_or_init(|| {
@@ -1521,6 +1502,7 @@ pub struct PublicSlotIndexes {
     pub split_ids: HashMap<SplitId, SplitPublicId>,
     pub screen_workspace: HashMap<ScreenId, WorkspaceId>,
     pub pane_screen: HashMap<PaneId, ScreenId>,
+    pub(crate) screen_apps: crate::state::app_screens_store::ScreenApps,
     pub tab_pane: HashMap<SurfaceId, PaneId>,
 }
 

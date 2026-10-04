@@ -77,6 +77,7 @@ pub(crate) fn project(state: &State) -> LayoutState {
                     .iter()
                     .map(|screen| Screen {
                         id: screen.id,
+                        kind: crate::state::app_rules::reducer_kind(state, screen.id),
                         columns_active: !screen.layout_columns.is_empty(),
                         // While columns are active, `root` is a derived
                         // projection of them.
@@ -132,7 +133,10 @@ pub(crate) fn model_result(
     // The daemon keeps its own durable replay ledger, so the key is unused.
     let op = LayoutOp { key: String::new(), kind: kind.clone() };
     apply(before, &op).map(|(model, _)| model).map_err(|reject| {
-        rejection(operation, vec![format!("the layout reducer rejects it: {reject}")])
+        // `app-screens-v1` refusals keep their own code.
+        crate::state::app_rules::reject_rule(&reject).unwrap_or_else(|| {
+            rejection(operation, vec![format!("the layout reducer rejects it: {reject}")])
+        })
     })
 }
 

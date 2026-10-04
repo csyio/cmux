@@ -23,6 +23,8 @@ use cmux_layout_reducer::LayoutOpKind;
 
 mod batch_close;
 mod column_update;
+mod effect_fields;
+use effect_fields::validate_effect_fields;
 mod layout_projection;
 mod published_screen;
 mod structural_move;
@@ -462,6 +464,7 @@ impl Mux {
             *self.resource_mutation_metrics.lock().unwrap() = Some(plan.metrics);
         }
         let marked = public_id.as_str().to_string();
+        let writes_mark = mark.writes();
         let write_mark = move |tx: &rusqlite::Transaction<'_>| mark.write(tx, &marked, &marked_key);
         let (commit, workspace_revision) = registry.commit_resource_creation_patch(
             correlation_key,
@@ -473,7 +476,7 @@ impl Mux {
             &created_path,
             &plan.deltas,
             plan.workspace_ledger.as_ref(),
-            mark.writes()
+            writes_mark
                 .then_some(&write_mark as crate::workspace_registry::RegistryTransactionWrite<'_>),
         )?;
         plan.apply(&mut state, &commit, workspace_revision);
@@ -1308,6 +1311,7 @@ impl Mux {
                 let first_pane = first.pane.context("pane selector has no live pane")?;
                 let second_pane = second.pane.context("other pane selector has no live pane")?;
                 anyhow::ensure!(first_pane != second_pane, "cannot swap a pane with itself");
+                crate::state::app_rules::refuse_swap(state, first_pane, second_pane)?;
                 let first_id = first.path.pane.context("pane selector has no public id")?;
                 let second_id = second.path.pane.context("other pane selector has no public id")?;
                 let first_screen =
@@ -1515,6 +1519,9 @@ impl Mux {
                     .map(|pane| (pane.id, pane.tabs.len())))
             })?;
             if let Some((pane, index)) = target {
+                self.with_state(|state| {
+                    crate::state::app_rules::refuse_move_tab(state, surface, pane)
+                })?;
                 anyhow::ensure!(self.move_tab(surface, pane, index), "tab could not be moved");
                 return Ok(());
             }
@@ -4077,6 +4084,7 @@ impl Mux {
         let resolved = self
             .resolve_resource_path_in_state(state, registry, target, selectors)
             .map_err(anyhow::Error::new)?;
+        crate::state::app_rules::refuse_effect(state, operation, &resolved, fields)?;
         let mut intent = json!({
             "path":resolved.path,
             "fields":fields,
@@ -5300,78 +5308,6 @@ fn validate_requested_terminal_id(value: &str) -> anyhow::Result<()> {
             && matches!(bytes[16], b'8'..=b'b'),
         "bad request: terminal_id must be a 32-character lowercase UUIDv4 hex value"
     );
-    Ok(())
-}
-
-fn validate_effect_fields(
-    operation: ResourceOperation,
-    fields: &Map<String, Value>,
-) -> anyhow::Result<()> {
-    match operation {
-        ResourceOperation::WorkspaceCreate => {
-            anyhow::ensure!(
-                required_str(fields, "initial_content")? == "terminal",
-                "effectful workspace creation requires terminal initial content"
-            );
-            if fields.contains_key("argv") || fields.contains_key("shell") {
-                let _ = effect_command(fields)?;
-            }
-        }
-        ResourceOperation::WorkspaceRun | ResourceOperation::PaneRun => {
-            let _ = effect_command(fields)?;
-            let _ = effect_cell_size(fields)?;
-        }
-        ResourceOperation::WorkspaceLayoutApply => {
-            anyhow::ensure!(fields["layout"].is_object(), "layout must be an object");
-        }
-        ResourceOperation::PaneCreate | ResourceOperation::TabCreateTerminal => {
-            let _ = effect_cell_size(fields)?;
-            let _ = optional_effect_command(fields)?;
-        }
-        ResourceOperation::PaneSplit => {
-            let direction = required_str(fields, "direction")?;
-            anyhow::ensure!(
-                matches!(direction, "left" | "right" | "up" | "down"),
-                "invalid pane split direction"
-            );
-            if let Some(ratio) = fields.get("ratio").and_then(Value::as_f64) {
-                anyhow::ensure!(
-                    ratio.is_finite() && 0.0 < ratio && ratio < 1.0,
-                    "invalid pane split ratio"
-                );
-                let ratio = ratio as f32;
-                anyhow::ensure!(
-                    ratio.is_finite() && 0.0 < ratio && ratio < 1.0,
-                    "pane split ratio cannot be represented"
-                );
-            }
-            if let Some(width) = fields.get("viewport_width").and_then(Value::as_f64) {
-                anyhow::ensure!(
-                    direction == "right"
-                        && width.is_finite()
-                        && (f64::from(MIN_VIEWPORT_PANE_WIDTH)
-                            ..=f64::from(MAX_VIEWPORT_PANE_WIDTH))
-                            .contains(&width),
-                    "invalid viewport pane width"
-                );
-            }
-            rows::validate_row_height_field(fields, direction)?;
-            let _ = effect_cell_size(fields)?;
-            let _ = optional_effect_command(fields)?;
-        }
-        ResourceOperation::TabCreateBrowser => {
-            anyhow::ensure!(!required_str(fields, "url")?.is_empty(), "browser URL is empty");
-            let dimensions = (
-                fields.get("width_px").and_then(Value::as_u64),
-                fields.get("height_px").and_then(Value::as_u64),
-            );
-            anyhow::ensure!(
-                matches!(dimensions, (None, None) | (Some(_), Some(_))),
-                "browser pixel dimensions must be paired"
-            );
-        }
-        _ => {}
-    }
     Ok(())
 }
 

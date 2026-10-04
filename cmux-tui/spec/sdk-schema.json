@@ -1408,11 +1408,32 @@
       "values": [
        "pty",
        "browser",
-       "conversation"
+       "conversation",
+       "app"
       ]
      },
      "presence": "required",
      "nullable": false
+    },
+    "app": {
+     "type": {
+      "kind": "scalar",
+      "name": "string"
+     },
+     "presence": "optional",
+     "nullable": false,
+     "since": 12,
+     "capability": "app-screens-v1"
+    },
+    "route": {
+     "type": {
+      "kind": "scalar",
+      "name": "string"
+     },
+     "presence": "optional",
+     "nullable": false,
+     "since": 12,
+     "capability": "app-screens-v1"
     },
     "browser_source": {
      "type": {
@@ -1641,6 +1662,29 @@
      },
      "presence": "required",
      "nullable": true
+    },
+    "kind": {
+     "type": {
+      "kind": "enum",
+      "values": [
+       "app",
+       "appColumn"
+      ]
+     },
+     "presence": "optional",
+     "nullable": false,
+     "since": 12,
+     "capability": "app-screens-v1"
+    },
+    "app": {
+     "type": {
+      "kind": "scalar",
+      "name": "string"
+     },
+     "presence": "optional",
+     "nullable": false,
+     "since": 12,
+     "capability": "app-screens-v1"
     },
     "active": {
      "type": {
@@ -14230,6 +14274,87 @@
    "stream": null,
    "constraints": [
     "owner is local or cloud; pane and workspace are exclusive (workspace: its active pane, or its first pane when empty); conversation is a conv_ id. origin and mutation_id are sent together; a retry with the same pair returns the first tab with replayed:true. See spec/commands.md."
+   ]
+  },
+  "new-app-tab": {
+   "authority": "control",
+   "since": 12,
+   "capability": "app-screens-v1",
+   "request": {
+    "kind": "object",
+    "fields": {
+     "app": {
+      "type": {
+       "kind": "scalar",
+       "name": "string"
+      },
+      "presence": "required",
+      "nullable": false
+     },
+     "route": {
+      "type": {
+       "kind": "scalar",
+       "name": "string"
+      },
+      "presence": "optional",
+      "nullable": true,
+      "default": null
+     },
+     "pane": {
+      "type": {
+       "kind": "ref",
+       "name": "Id"
+      },
+      "presence": "optional",
+      "nullable": true,
+      "default": null
+     },
+     "workspace": {
+      "type": {
+       "kind": "ref",
+       "name": "Id"
+      },
+      "presence": "optional",
+      "nullable": true,
+      "default": null
+     },
+     "idempotency_key": {
+      "type": {
+       "kind": "scalar",
+       "name": "string"
+      },
+      "presence": "optional",
+      "nullable": true,
+      "default": null
+     },
+     "cols": {
+      "type": {
+       "kind": "scalar",
+       "name": "uint16"
+      },
+      "presence": "optional",
+      "nullable": true,
+      "default": null
+     },
+     "rows": {
+      "type": {
+       "kind": "scalar",
+       "name": "uint16"
+      },
+      "presence": "optional",
+      "nullable": true,
+      "default": null
+     }
+    },
+    "additional_properties": false
+   },
+   "result": {
+    "kind": "ref",
+    "name": "JsonValue"
+   },
+   "stream": null,
+   "constraints": [
+    "app is a manifest app id (publisher/name: ASCII letters, digits, ., _, - or /); route has no control characters. pane and workspace are exclusive (workspace: its active pane, or its first pane when empty). A retry with the same idempotency_key returns the first tab with replayed:true. In an app screen or an app column it is refused (error_code app-screen-fixed or app-column-locked). See spec/commands.md for the result object."
    ]
   },
   "new-frontend-browser-tab": {

@@ -42,12 +42,14 @@ pub(crate) fn create_home_schema(transaction: &Transaction<'_>) -> anyhow::Resul
 }
 
 /// The state row an empty workspace creation writes in its own commit.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum EmptyWorkspaceMark {
     #[default]
     None,
     Ephemeral,
     Home,
+    /// `app-screens-v1`: a workspace of kind `app` for this app.
+    App(String),
 }
 
 impl EmptyWorkspaceMark {
@@ -55,23 +57,24 @@ impl EmptyWorkspaceMark {
         if ephemeral { Self::Ephemeral } else { Self::None }
     }
 
-    pub(crate) fn writes(self) -> bool {
-        self != Self::None
+    pub(crate) fn writes(&self) -> bool {
+        *self != Self::None
     }
 
     /// The field the creation fingerprint carries for this mark.
-    pub(crate) fn fingerprint_field(self) -> Option<(&'static str, serde_json::Value)> {
+    pub(crate) fn fingerprint_field(&self) -> Option<(&'static str, serde_json::Value)> {
         match self {
             Self::None => None,
             Self::Ephemeral => Some(("ephemeral", serde_json::Value::Bool(true))),
             Self::Home => Some(("kind", serde_json::Value::String(HOME_KIND.to_string()))),
+            Self::App(app) => Some(("app", serde_json::Value::String(app.clone()))),
         }
     }
 
     /// The rows this mark writes in the transaction that creates the
     /// workspace.
     pub(crate) fn write(
-        self,
+        &self,
         transaction: &Transaction<'_>,
         workspace_id: &str,
         workspace_key: &str,
@@ -84,6 +87,9 @@ impl EmptyWorkspaceMark {
             Self::Home => {
                 mark_workspace_home(transaction, workspace_id)?;
                 place_home_first(transaction, workspace_key)
+            }
+            Self::App(app) => {
+                crate::state::app_screens_store::write_app_workspace(transaction, workspace_id, app)
             }
         }
     }

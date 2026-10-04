@@ -145,12 +145,16 @@ test "every generated optional non-null field rejects explicit null" {
     try expectExplicitNullRejected(protocol.RenderGraphicsDelta, "removed_image_ids");
     try expectExplicitNullRejected(protocol.RenderRun, "underline");
     try expectExplicitNullRejected(protocol.RenderRun, "width_hint");
+    try expectExplicitNullRejected(protocol.Screen, "app");
+    try expectExplicitNullRejected(protocol.Screen, "kind");
     try expectExplicitNullRejected(protocol.Screen, "short_id");
     try expectExplicitNullRejected(protocol.SetSizeCountsResult, "changed");
     try expectExplicitNullRejected(protocol.SetSizeCountsResult, "participant");
     try expectExplicitNullRejected(protocol.SetSizePolicyResult, "state");
     try expectExplicitNullRejected(protocol.SizePolicy, "mode");
     try expectExplicitNullRejected(protocol.SizePolicy, "priority");
+    try expectExplicitNullRejected(protocol.Tab, "app");
+    try expectExplicitNullRejected(protocol.Tab, "route");
     try expectExplicitNullRejected(protocol.Tab, "short_id");
     try expectExplicitNullRejected(protocol.Tab, "supports_clear_history_key_fallback");
     try expectExplicitNullRejected(protocol.TerminalColors, "overrides");

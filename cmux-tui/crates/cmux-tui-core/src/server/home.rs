@@ -4,5 +4,12 @@
 use crate::workspace_registry::PresentationSnapshot;
 
 pub(super) fn raw_workspace_kind(presentation: &PresentationSnapshot, key: &str) -> &'static str {
-    if presentation.home_workspace.as_deref() == Some(key) { "home" } else { "normal" }
+    if presentation.home_workspace.as_deref() == Some(key) {
+        "home"
+    } else if presentation.apps.workspaces.contains_key(key) {
+        // `app-screens-v1`: a workspace of kind `app`.
+        "app"
+    } else {
+        "normal"
+    }
 }

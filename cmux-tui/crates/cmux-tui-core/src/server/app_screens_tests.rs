@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use super::*;
 use crate::workspace_registry::WorkspaceRegistry;
 
+#[path = "app_screens_rules_tests.rs"]
+mod rules;
+
 const STORE: &str = "cmux/app-store";
 const HOME: &str = "cmux/home";
 

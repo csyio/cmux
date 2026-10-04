@@ -103,6 +103,7 @@ pub use loopback_forward::{
 mod admission;
 mod line_connection;
 use line_connection::{handle_connection_with_permit, serve_line_connection};
+mod app_screens_wire;
 mod bookmarks;
 mod browser_profiles;
 mod conversation_tabs_wire;
@@ -486,6 +487,7 @@ fn advertised_capabilities(bounded_clear_history_fallback_writes: bool) -> Vec<&
         FRONTEND_BROWSER_OWNER_CAPABILITY,
         crate::state::frontend_browser_keys::FRONTEND_BROWSER_TAB_KEYS_CAPABILITY,
         crate::state::home_store::WORKSPACE_KIND_CAPABILITY,
+        crate::state::app_screens_store::APP_SCREENS_CAPABILITY,
         crate::state::conversation_tabs_store::CONVERSATION_TABS_CAPABILITY,
         crate::git_ops::CHECKPOINTS_CAPABILITY,
         crate::git_ops::FILES_SEARCH_CAPABILITY,
@@ -1462,6 +1464,8 @@ enum Command {
     },
     /// `conversation-tabs-v1`: a tab showing one conversation (server/conversation_tabs_wire.rs).
     NewConversationTab(conversation_tabs_wire::NewConversationTabParams),
+    /// `app-screens-v1`: a tab showing one app (server/app_screens_wire.rs).
+    NewAppTab(app_screens_wire::NewAppTabParams),
     /// New browser tab whose page the frontend renders (WebKit or CEF).
     NewFrontendBrowserTab(frontend_browser_history::NewTabParams),
     UpdateFrontendBrowserTab(frontend_browser_history::UpdateTabParams),
@@ -3744,6 +3748,8 @@ struct MessageWriter {
     closed: InterruptSet,
     /// Negotiated `conversation-tabs-v1` (server/conversation_tabs_wire.rs).
     conversation_tabs: Arc<AtomicBool>,
+    /// Negotiated `app-screens-v1` (server/app_screens_wire.rs).
+    app_screens: Arc<AtomicBool>,
 }
 
 impl MessageWriter {
@@ -3770,6 +3776,7 @@ impl MessageWriter {
             wait_wakeups: Arc::new(Mutex::new(Vec::new())),
             closed: InterruptSet::default(),
             conversation_tabs: Arc::new(AtomicBool::new(false)),
+            app_screens: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -5570,6 +5577,7 @@ impl ClientRegistry {
                     || capability == LOOPBACK_FORWARD_CAPABILITY
                     || capability
                         == crate::state::conversation_tabs_store::CONVERSATION_TABS_CAPABILITY
+                    || capability == crate::state::app_screens_store::APP_SCREENS_CAPABILITY
             }));
             record.writer.negotiate_conversation_tabs(record.capabilities.iter());
         }
@@ -11332,7 +11340,8 @@ fn pane_json(
                 // Why a dead terminal ended (R41, terminal-state-v1).
                 "end": end,
             });
-            raw_tab::merge_browser_fields(&mut tab, surface, frontend_browser, conversation);
+            let app = content_resource_id.and_then(|id| notifications.presentation.apps.tabs.get(id));
+            raw_tab::merge_browser_fields(&mut tab, surface, frontend_browser, conversation, app);
             tab
         }).collect::<Vec<_>>(),
     })
@@ -13681,6 +13690,7 @@ fn handle_command_with_cancellation(
         Command::NewConversationTab(params) => {
             conversation_tabs_wire::new_conversation_tab(mux, params)
         }
+        Command::NewAppTab(params) => app_screens_wire::new_app_tab(mux, params),
         Command::NewFrontendBrowserTab(params) => frontend_browser_history::create(mux, params),
         Command::UpdateFrontendBrowserTab(params) => frontend_browser_history::update(mux, params),
         Command::SetFrontendBrowserHistory(params) => frontend_browser_history::set(mux, params),
@@ -14264,6 +14274,7 @@ fn handle_command_with_cancellation(
                 (None, Some(target)) => target,
                 (None, None) => anyhow::bail!("one of dir or target is required"),
             };
+            mux.with_state(|state| crate::state::app_rules::refuse_swap(state, pane, target))?;
             if !mux.swap_panes(pane, target) {
                 anyhow::bail!("unknown pane/target");
             }
@@ -14370,6 +14381,7 @@ fn handle_command_with_cancellation(
             if !valid {
                 anyhow::bail!("unknown surface/pane");
             }
+            mux.with_state(|state| crate::state::app_rules::refuse_move_tab(state, surface, pane))?;
             let index = mux.pinned_tab_move_index(surface, pane, index);
             let (moved, undoable) = mux.move_tab_with_undo(surface, pane, index, transaction);
             Ok(json!({"moved": moved, "undoable": undoable}))

@@ -1132,6 +1132,8 @@ class Screen:
     name: Union[str, None]
     panes: List[Pane]
     zoomed_pane: Union[Id, None]
+    app: Union[str, MissingType] = field(default=MISSING)
+    kind: Union[Literal['app', 'appColumn'], MissingType] = field(default=MISSING)
     short_id: Union[str, MissingType] = field(default=MISSING)
 
 
@@ -1378,15 +1380,17 @@ class Tab:
     surface: Id
     browser_source: Union[Literal['external', 'launched'], None]
     dead: bool
-    kind: Literal['pty', 'browser', 'conversation']
+    kind: Literal['pty', 'browser', 'conversation', 'app']
     name: Union[str, None]
     size: Union[Size, None]
     title: str
     terminal_id: Union[str, None, MissingType] = field(default=MISSING)
+    app: Union[str, MissingType] = field(default=MISSING)
     browser_error: Union[str, None, MissingType] = field(default=MISSING)
     browser_frames_stalled: Union[bool, None, MissingType] = field(default=MISSING)
     browser_status: Union[Literal['starting', 'live', 'failed'], None, MissingType] = field(default=MISSING)
     notification: Union[NotificationMarker, None, MissingType] = field(default=MISSING)
+    route: Union[str, MissingType] = field(default=MISSING)
     short_id: Union[str, MissingType] = field(default=MISSING)
     supports_clear_history_key_fallback: Union[bool, MissingType] = field(default=MISSING)
     terminal_incarnation: Union[str, None, MissingType] = field(default=MISSING)
@@ -2620,6 +2624,18 @@ class MoveWorkspaceToGroupRequest:
     key: Union[str, None, MissingType] = field(default=MISSING)
     mutation_id: Union[str, None, MissingType] = field(default=MISSING)
     origin: Union[str, None, MissingType] = field(default=MISSING)
+
+
+@dataclass(frozen=True)
+class NewAppTabRequest:
+    __cmux_schema_path__: ClassVar[str] = 'commands/new-app-tab/request'
+    app: str
+    pane: Union[Id, None, MissingType] = field(default=MISSING)
+    workspace: Union[Id, None, MissingType] = field(default=MISSING)
+    cols: Union[int, None, MissingType] = field(default=MISSING)
+    idempotency_key: Union[str, None, MissingType] = field(default=MISSING)
+    route: Union[str, None, MissingType] = field(default=MISSING)
+    rows: Union[int, None, MissingType] = field(default=MISSING)
 
 
 @dataclass(frozen=True)
@@ -4510,6 +4526,7 @@ __all__ = [
     'MoveWorkspaceRequest',
     'MoveWorkspaceGroupRequest',
     'MoveWorkspaceToGroupRequest',
+    'NewAppTabRequest',
     'NewBrowserTabRequest',
     'NewConversationTabRequest',
     'NewConversationTabResult',
