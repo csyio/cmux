@@ -21,6 +21,7 @@ use std::collections::BTreeSet;
 use cmux_layout_reducer::AppRefusal;
 use rusqlite::{OptionalExtension, Transaction};
 
+use crate::model::{ColumnSticky, StickyEdge, StickyMode};
 use crate::state::app_screens_store::AppRule;
 use crate::workspace_registry::{
     RegistryLayoutNode, RegistryViewport, ResourceChange, ResourcePatch,
@@ -98,7 +99,7 @@ fn holds_only_app(transaction: &Transaction<'_>, pane: &str, app: &str) -> anyho
     Ok(matches!(tabs.as_slice(), [Some(tab_app)] if tab_app == app))
 }
 
-fn check_screen(transaction: &Transaction<'_>, screen: &str) -> anyhow::Result<()> {
+pub(crate) fn check_screen(transaction: &Transaction<'_>, screen: &str) -> anyhow::Result<()> {
     let row = transaction
         .query_row(
             "SELECT k.kind, k.app_id, s.workspace_id, s.layout_json, s.viewport_json
@@ -122,8 +123,11 @@ fn check_screen(transaction: &Transaction<'_>, screen: &str) -> anyhow::Result<(
     let refusal = if app_screen { AppRefusal::ScreenFixed } else { AppRefusal::ColumnLocked };
     let layout: RegistryLayoutNode = serde_json::from_str(&layout)?;
     let viewport: RegistryViewport = serde_json::from_str(&viewport)?;
+    let left = ColumnSticky { edge: StickyEdge::Left, mode: StickyMode::Docked };
     let app_pane = match viewport.columns.first() {
         Some(_) if app_screen => None,
+        // A2 in the stored model: the app column is pinned left, docked.
+        Some(column) if column.sticky != Some(left) => None,
         Some(column) => leaf(&column.layout),
         None => leaf(&layout),
     };

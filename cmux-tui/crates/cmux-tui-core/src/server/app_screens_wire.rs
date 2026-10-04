@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{Mux, PaneId, WorkspaceId, paired_surface_size};
-use crate::model::{ColumnSticky, Screen, State, StickyEdge, StickyMode};
+use crate::model::{Screen, State};
 use crate::state::app_screens::AppTabTarget;
 use crate::state::app_screens_store::{AppScreenKind, AppTabRecord};
 use crate::workspace_registry::WorkspaceMutation;
@@ -60,8 +60,9 @@ pub(super) fn new_app_tab(mux: &Arc<Mux>, params: NewAppTabParams) -> anyhow::Re
 }
 
 /// The app fields of one raw screen: `kind` and `app` on an app screen, and
-/// on an `appColumn` screen with columns `app` plus the left docked `sticky`
-/// flag on column 0, the app column. An ordinary screen gets nothing.
+/// on an `appColumn` screen with columns `app` on column 0, the app column
+/// (its left docked `sticky` flag is stored). An ordinary screen gets
+/// nothing.
 pub(super) fn merge_screen_fields(state: &State, screen: &Screen, value: &mut Value) {
     let Some(app) = state.resource_indexes.screen_apps.get(&screen.id) else { return };
     value["kind"] = json!(app.kind.as_str());
@@ -71,7 +72,5 @@ pub(super) fn merge_screen_fields(state: &State, screen: &Screen, value: &mut Va
     }
     if let Some(column) = value.get_mut("columns").and_then(|columns| columns.get_mut(0)) {
         column["app"] = json!(app.app);
-        let sticky = ColumnSticky { edge: StickyEdge::Left, mode: StickyMode::Docked };
-        column["sticky"] = json!(sticky);
     }
 }

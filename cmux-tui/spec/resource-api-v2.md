@@ -162,8 +162,11 @@ and the store checks them again on the rows of every commit, in its
 transaction. A new tab sent to a workspace or screen (not to a pane) whose
 focused pane is the app column goes to the first ordinary column, or into a
 new ordinary column right of the app column; it is never refused.
-`tab.create_app` takes `expected_revision` like `tab.create_browser`. A
-refused operation changes nothing. A connection without `app-screens-v1` reads an app tab's
+`tab.create_app` takes `expected_revision` like `tab.create_browser`. The
+app column is stored pinned left and docked and never counts as a scrolling
+column. A closed app workspace that `closed.reopen` brings back loads as an
+ordinary screen with its app tab; the next `workspace.ensure_app` restores its
+kind. A refused operation changes nothing. A connection without `app-screens-v1` reads an app tab's
 `content_kind` as `browser`.
 `closed.reopen` and `saved_tab_group.reopen` compose several creations; the request's key records the whole result, so a retry replays it.
 

@@ -119,6 +119,27 @@ impl Wire {
         (surface, self.mux.with_state(|state| state.pane_of(surface).unwrap()))
     }
 
+    /// The stored viewport of an appColumn screen: `columns` columns, and
+    /// column 0 (the app column) pinned left, docked; no other left pin.
+    fn assert_stored_app_column(&self, screen_id: &str, columns: usize) {
+        let topology =
+            self.mux.workspace_registry.lock().unwrap().resource_topology_snapshot().unwrap();
+        let screen = topology
+            .screens
+            .iter()
+            .find(|screen| screen.public_id.as_str() == screen_id)
+            .expect("the app screen is stored");
+        let stored = &screen.viewport.columns;
+        assert_eq!(stored.len(), columns, "stored viewport: {stored:?}");
+        let left =
+            crate::ColumnSticky { edge: crate::StickyEdge::Left, mode: crate::StickyMode::Docked };
+        assert_eq!(stored[0].sticky, Some(left), "stored app column: {stored:?}");
+        assert!(
+            stored[1..].iter().all(|column| column.sticky.is_none_or(|s| s.edge != left.edge)),
+            "{stored:?}"
+        );
+    }
+
     fn pane_of(&self, surface: SurfaceId) -> PaneId {
         self.mux.with_state(|state| state.pane_of(surface).unwrap())
     }
@@ -475,8 +496,8 @@ fn app_column_is_locked_and_ordinary_columns_are_free() {
     let columns = raw["columns"].as_array().cloned().unwrap_or_default();
     assert_eq!(columns.len(), 2, "{raw}");
     assert_eq!(columns[0]["app"], HOME, "{raw}");
-    assert_eq!(columns[0]["sticky"], json!({"edge": "left", "mode": "docked"}), "{raw}");
     assert!(columns[1].get("app").is_none(), "{raw}");
+    wire.assert_stored_app_column(&screen_id, 2);
     let before = layout_fingerprint(&wire.tree());
 
     let code = "app-column-locked";
@@ -554,8 +575,17 @@ fn app_column_is_locked_and_ordinary_columns_are_free() {
     wire.ok(json!({"cmd": "set-viewport-pane-width", "pane": app_pane, "width": 0.3}));
     wire.ok(json!({"cmd": "new-tab", "pane": ordinary}));
     wire.ok(json!({"cmd": "split", "pane": ordinary, "dir": "down"}));
-    wire.ok(json!({"cmd": "set-column-sticky", "pane": ordinary, "sticky": true, "edge": "right"}));
-    wire.ok(json!({"cmd": "set-column-sticky", "pane": ordinary, "sticky": false}));
+    // E2: the app column does not scroll, so the only ordinary column may
+    // not be pinned too; with a second ordinary column it may.
+    wire.refused(
+        json!({"cmd": "set-column-sticky", "pane": ordinary, "sticky": true, "edge": "right"}),
+        "sticky-column-last-scrolling",
+    );
+    let third = wire.ok(json!({"cmd": "new-pane-right", "pane": ordinary, "width": 0.5}));
+    let third = wire.pane_of(third["surface"].as_u64().unwrap());
+    wire.ok(json!({"cmd": "set-column-sticky", "pane": third, "sticky": true, "edge": "right"}));
+    wire.ok(json!({"cmd": "set-column-sticky", "pane": third, "sticky": false}));
+    wire.assert_stored_app_column(&screen_id, 3);
     wire.ok(json!({"cmd": "move-tab", "surface": terminal, "pane": ordinary, "index": 0}));
     // Closing every ordinary column leaves a valid screen of only the app column.
     wire.ok(json!({"cmd": "close-pane", "pane": ordinary}));
@@ -636,8 +666,8 @@ fn lone_app_column_takes_a_first_column_from_another_workspace() {
     let columns = raw["columns"].as_array().cloned().unwrap_or_default();
     assert_eq!(columns.len(), 2, "{raw}");
     assert_eq!(columns[0]["app"], HOME, "{raw}");
-    assert_eq!(columns[0]["sticky"], json!({"edge": "left", "mode": "docked"}));
     assert!(columns[1].get("app").is_none(), "{raw}");
+    wire.assert_stored_app_column(&screen_id, 2);
     assert_eq!(wire.pane_of(app), app_pane, "the app tab stays in the app column");
     let moved_pane = wire.pane_of(terminal);
     assert_ne!(moved_pane, app_pane);
@@ -689,8 +719,8 @@ fn home_migration_is_idempotent_and_survives_restart() {
         let columns = screen["columns"].as_array().cloned().unwrap();
         assert_eq!(columns.len(), 3, "the app column and the two existing columns: {screen}");
         assert_eq!(columns[0]["app"], HOME);
-        assert_eq!(columns[0]["sticky"], json!({"edge": "left", "mode": "docked"}));
         assert!(columns[1..].iter().all(|column| column.get("app").is_none()));
+        wire.assert_stored_app_column(screen["resource_id"].as_str().unwrap(), 3);
         let tabs = tabs(&screen);
         assert_eq!(tabs.len(), 3, "{screen}");
         assert_eq!(tabs.iter().filter(|tab| tab["kind"] == "app").count(), 1);

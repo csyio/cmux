@@ -21,6 +21,7 @@ use crate::workspace_registry::{
 use crate::{ResolvedResourcePath, ResourceSelectors, ResourceTarget, SurfaceKind};
 use cmux_layout_reducer::LayoutOpKind;
 
+mod app_screen_support;
 mod batch_close;
 mod column_update;
 mod effect_fields;

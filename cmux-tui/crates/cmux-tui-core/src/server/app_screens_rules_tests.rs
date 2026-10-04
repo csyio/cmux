@@ -247,3 +247,181 @@ fn new_tabs_sent_to_the_home_land_in_an_ordinary_column() {
     assert_eq!(tabs(&screen).len(), 4, "{screen}");
     wire.mux.shutdown();
 }
+
+/// The app workspace of `app`, created as the first step of
+/// `workspace.ensure_app` (as if the daemon stopped right after it).
+fn interrupted_app_workspace(wire: &Wire, app: &str, key: &str) -> (String, WorkspaceId) {
+    wire.mux
+        .resource_create_empty_workspace_selected(
+            Mux::ordinary_resource_selectors(),
+            Some(app.to_string()),
+            key,
+            None,
+            &WorkspaceMutation::local("app-crash"),
+            crate::state::home_store::EmptyWorkspaceMark::App(app.to_string()),
+        )
+        .unwrap();
+    wire.mux.with_state(|state| {
+        let workspace = state.workspaces.last().unwrap();
+        (workspace.public_id.to_string(), workspace.id)
+    })
+}
+
+fn app_record(app: &str) -> crate::state::app_screens_store::AppTabRecord {
+    crate::state::app_screens_store::AppTabRecord { app: app.to_string(), route: None }
+}
+
+/// `workspace.ensure_app` resumes a creation interrupted after any of its
+/// commits, and replaces a workspace whose screen changed between them.
+#[test]
+fn ensure_app_resumes_or_replaces_an_interrupted_creation() {
+    use crate::state::app_screens::AppTabTarget;
+    let mut wire = Wire::new();
+    let _ = wire.terminal_pane();
+
+    // Stopped after the workspace commit.
+    let (first, _) = interrupted_app_workspace(&wire, STORE, "crash-1");
+    let resumed = wire.ensure_app(STORE, "app", "resume-1");
+    assert_eq!(resumed["value"]["workspace_id"], first.as_str(), "{resumed}");
+    let raw = wire.screen(resumed["value"]["screen_id"].as_str().unwrap());
+    assert_eq!(raw["kind"], "app", "{raw}");
+
+    // Stopped after the app tab commit.
+    let (second, slot) = interrupted_app_workspace(&wire, HOME, "crash-2");
+    let tab = wire.mux.new_app_tab(AppTabTarget::Workspace(slot), app_record(HOME), None, None);
+    let surface = tab.unwrap().surface.id;
+    let screen = wire.mux.with_state(|state| {
+        let (w, s) = state.screen_of(state.pane_of(surface).unwrap()).unwrap();
+        state.workspaces[w].screens[s].public_id.to_string()
+    });
+    let resumed = wire.ensure_app(HOME, "appColumn", "resume-2");
+    assert_eq!(resumed["value"]["workspace_id"], second.as_str(), "{resumed}");
+    assert_eq!(resumed["value"]["screen_id"], screen.as_str(), "{resumed}");
+    assert_eq!(wire.screen(&screen)["kind"], "appColumn");
+
+    // The screen changed between the commits: a second tab joined the app
+    // pane. The old workspace stays ordinary with both tabs; the app gets a
+    // new workspace.
+    let other = "cmux/other";
+    let (third, slot) = interrupted_app_workspace(&wire, other, "crash-3");
+    let tab = wire.mux.new_app_tab(AppTabTarget::Workspace(slot), app_record(other), None, None);
+    let app_pane = wire.pane_of(tab.unwrap().surface.id);
+    wire.ok(json!({"cmd": "new-tab", "pane": app_pane}));
+    let replaced = wire.ensure_app(other, "app", "resume-3");
+    assert_ne!(replaced["value"]["workspace_id"], third.as_str(), "{replaced}");
+    let raw = wire.screen(replaced["value"]["screen_id"].as_str().unwrap());
+    assert_eq!(raw["kind"], "app", "{raw}");
+    let _ = app_tab(&raw);
+    let tree = wire.tree();
+    let old = tree["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["resource_id"] == third.as_str())
+        .cloned()
+        .expect("the old workspace stays");
+    assert_eq!(old["kind"], "normal", "{old}");
+    assert_eq!(tabs(&old["screens"][0]).len(), 2, "{old}");
+    wire.mux.shutdown();
+}
+
+/// The Home migration resumes after a stop between its app tab commit and
+/// its kind commit, reusing that app tab.
+#[test]
+fn home_migration_resumes_after_an_interrupted_step() {
+    use crate::state::app_screens::AppTabTarget;
+    let mut wire = Wire::new();
+    let home = wire.v2_ok("workspace.ensure_home", json!({}), Some("connect-1"));
+    let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
+    let home_slot = wire.workspace_slot(&home_id);
+    let conversation = wire.ok(json!({"cmd": "new-conversation-tab", "workspace": home_slot,
+                                     "conversation": "conv_01R", "owner": "local",
+                                     "origin": "resume-test", "mutation_id": "c"}));
+    let pane = wire.pane_of(conversation["surface"].as_u64().unwrap());
+    let tab = wire.mux.new_app_tab(AppTabTarget::Pane(Some(pane)), app_record(HOME), None, None);
+    let app = tab.unwrap().surface.id;
+    let migrate = json!({"screen": "appColumn", "app": HOME});
+    wire.v2_ok("workspace.ensure_home", migrate, Some("connect-2"));
+    let screen = wire.mux.with_state(|state| {
+        let (w, s) = state.screen_of(state.pane_of(app).unwrap()).unwrap();
+        state.workspaces[w].screens[s].public_id.to_string()
+    });
+    let raw = wire.screen(&screen);
+    assert_eq!(raw["kind"], "appColumn", "{raw}");
+    assert_eq!(tabs(&raw).iter().filter(|tab| tab["kind"] == "app").count(), 1, "{raw}");
+    assert_eq!(tabs(&raw).len(), 2, "{raw}");
+    wire.assert_stored_app_column(&screen, 2);
+    wire.mux.shutdown();
+}
+
+/// A new tab sent to the home screen (a screen target, not a pane) whose
+/// focused pane is the lone app column gets a new ordinary column.
+#[test]
+fn new_tab_sent_to_the_home_screen_lands_in_an_ordinary_column() {
+    let mut wire = Wire::new();
+    let migrate = json!({"screen": "appColumn", "app": HOME});
+    let home = wire.v2_ok("workspace.ensure_home", migrate, Some("connect"));
+    let home_id = home["value"]["workspace_id"].as_str().unwrap().to_string();
+    let screen = wire.mux.with_state(|state| {
+        let workspace = state.workspaces.iter().find(|w| w.public_id.as_str() == home_id);
+        workspace.unwrap().screens[0].public_id.to_string()
+    });
+    wire.v2_ok(
+        "tab.create_browser",
+        json!({"workspace": home_id, "screen": screen, "url": "https://example.com"}),
+        Some("screen-target"),
+    );
+    let raw = wire.screen(&screen);
+    assert_eq!(raw["columns"].as_array().map(Vec::len), Some(2), "{raw}");
+    wire.assert_stored_app_column(&screen, 2);
+    wire.mux.shutdown();
+}
+
+/// v2 `pane.swap` and `workspace.layout.apply` refuse the app column.
+#[test]
+fn v2_swap_and_layout_apply_refuse_the_app_column() {
+    let mut wire = Wire::new();
+    let created = wire.ensure_app(HOME, "appColumn", "open-home");
+    let screen = created["value"]["screen_id"].as_str().unwrap().to_string();
+    let workspace = created["value"]["workspace_id"].as_str().unwrap().to_string();
+    let (_, app_pane) = app_tab(&wire.screen(&screen));
+    let right = wire.ok(json!({"cmd": "new-pane-right", "pane": app_pane, "width": 0.5}));
+    let ordinary = wire.pane_of(right["surface"].as_u64().unwrap());
+    let before = layout_fingerprint(&wire.tree());
+    let swap = json!({"workspace": workspace, "screen": screen,
+                      "pane": wire.public_pane(app_pane), "other_workspace": workspace,
+                      "other_screen": screen, "other_pane": wire.public_pane(ordinary)});
+    wire.v2_refused("pane.swap", swap, "swap-app-column", "app.column_locked");
+    let layout = wire.v2_ok(
+        "screen.layout.export",
+        json!({"workspace": workspace,
+                                                           "screen": screen}),
+        None,
+    );
+    let apply = json!({"workspace": workspace, "layout": layout});
+    wire.v2_refused("workspace.layout.apply", apply, "apply-app-column", "app.column_locked");
+    assert_eq!(layout_fingerprint(&wire.tree()), before);
+    wire.mux.shutdown();
+}
+
+/// A refused op leaves the store as it was: after a restart the app screen
+/// still has its one app tab.
+#[test]
+fn a_refused_op_survives_a_restart_unchanged() {
+    let store = Store::new("refused-restart");
+    let mut wire = store.open();
+    let created = wire.ensure_app(STORE, "app", "open-store");
+    let screen = created["value"]["screen_id"].as_str().unwrap().to_string();
+    let (app, pane) = app_tab(&wire.screen(&screen));
+    wire.refused(json!({"cmd": "close-surface", "surface": app}), "app-screen-fixed");
+    wire.refused(json!({"cmd": "new-tab", "pane": pane}), "app-screen-fixed");
+    let before = wire.public_tab(app);
+    wire.mux.shutdown();
+    drop(wire);
+    let mut wire = store.open();
+    let raw = wire.screen(&screen);
+    assert_eq!(raw["kind"], "app", "{raw}");
+    let (app, _) = app_tab(&raw);
+    assert_eq!(wire.public_tab(app), before);
+    wire.mux.shutdown();
+}

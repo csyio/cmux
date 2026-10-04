@@ -22,7 +22,7 @@ use std::sync::Mutex;
 use serde_json::{Map, json};
 
 use crate::Surface;
-use crate::model::{ColumnSticky, Screen, StickyEdge, StickyMode};
+use crate::model::Screen;
 use crate::mux::*;
 use crate::resource::BrowserPublicId;
 use crate::state::app_rules::first_column_panes;
@@ -73,39 +73,13 @@ impl Mux {
         let _ensuring = ENSURING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let existing =
             self.read_registry_state(|connection| live_app_workspace(connection, app))?;
-        let replayed = existing.is_some();
-        let workspace_id = match existing {
-            Some((workspace_id, _)) => workspace_id,
-            None => {
-                let mutation = WorkspaceMutation::local(APP_MUTATION_ORIGIN);
-                let correlation = format!("app-{}", WorkspacePublicId::random()?);
-                self.resource_create_empty_workspace_selected(
-                    Self::ordinary_resource_selectors(),
-                    Some(app.to_string()),
-                    &correlation,
-                    None,
-                    &mutation,
-                    EmptyWorkspaceMark::App(app.to_string()),
-                )?;
-                self.reload_presentation(&self.workspace_registry.lock().unwrap())?;
-                self.emit(MuxEvent::TreeChanged);
-                self.read_registry_state(|connection| live_app_workspace(connection, app))?
-                    .context("the created app workspace has no app row")?
-                    .0
-            }
-        };
-        let workspace = self
-            .with_state(|state| {
-                state
-                    .workspaces
-                    .iter()
-                    .find(|item| item.public_id.as_str() == workspace_id)
-                    .map(|item| item.id)
-            })
-            .context("the app workspace disappeared")?;
-        let screen = match self.app_screen_of(workspace, app) {
-            Some((screen, stored)) => {
-                if let Some(stored) = stored {
+        if let Some((workspace_id, _)) = existing {
+            let workspace = self.workspace_slot_of(&workspace_id)?;
+            let screens = self.with_state(|state| {
+                state.workspace_by_id(workspace).map_or(0, |item| item.screens.len())
+            });
+            match self.app_screen_of(workspace, app) {
+                Some((screen, Some(stored))) => {
                     anyhow::ensure!(
                         stored.kind == kind,
                         "bad request: app {app} is open as kind {}",
@@ -113,21 +87,85 @@ impl Mux {
                     );
                     let screen_id = self.public_screen(screen)?;
                     let revision = self.with_state(|state| state.resource_revision);
-                    return Ok(EnsuredApp { workspace_id, screen_id, revision, replayed });
+                    return Ok(EnsuredApp { workspace_id, screen_id, revision, replayed: true });
                 }
-                screen
+                // A creation a crash interrupted before its kind commit.
+                Some((screen, None)) => {
+                    if let Ok(ensured) = self.finish_app_screen(&workspace_id, screen, app, kind) {
+                        return Ok(ensured);
+                    }
+                }
+                None if screens == 0 => {
+                    return self.fill_app_workspace(&workspace_id, workspace, app, kind);
+                }
+                None => {}
             }
-            None => {
-                let record = AppTabRecord { app: app.to_string(), route: None };
-                let tab =
-                    self.new_app_tab(AppTabTarget::Workspace(workspace), record, None, None)?;
-                self.screen_of_surface(tab.surface.id)?
-            }
-        };
+            // The workspace lost its shape between the commits of an
+            // interrupted creation: it stays as an ordinary workspace with
+            // every tab, and the app gets a new workspace (its
+            // `app_workspaces` row moves there).
+        }
+        let mutation = WorkspaceMutation::local(APP_MUTATION_ORIGIN);
+        let correlation = format!("app-{}", WorkspacePublicId::random()?);
+        self.resource_create_empty_workspace_selected(
+            Self::ordinary_resource_selectors(),
+            Some(app.to_string()),
+            &correlation,
+            None,
+            &mutation,
+            EmptyWorkspaceMark::App(app.to_string()),
+        )?;
+        self.reload_presentation(&self.workspace_registry.lock().unwrap())?;
+        self.emit(MuxEvent::TreeChanged);
+        let workspace_id = self
+            .read_registry_state(|connection| live_app_workspace(connection, app))?
+            .context("the created app workspace has no app row")?
+            .0;
+        let workspace = self.workspace_slot_of(&workspace_id)?;
+        self.fill_app_workspace(&workspace_id, workspace, app, kind)
+    }
+
+    fn workspace_slot_of(&self, workspace_id: &str) -> anyhow::Result<WorkspaceId> {
+        self.with_state(|state| {
+            state
+                .workspaces
+                .iter()
+                .find(|item| item.public_id.as_str() == workspace_id)
+                .map(|item| item.id)
+        })
+        .context("the app workspace disappeared")
+    }
+
+    /// The app tab in the empty app workspace, then the kind commit.
+    fn fill_app_workspace(
+        self: &Arc<Self>,
+        workspace_id: &str,
+        workspace: WorkspaceId,
+        app: &str,
+        kind: AppScreenKind,
+    ) -> anyhow::Result<EnsuredApp> {
+        let record = AppTabRecord { app: app.to_string(), route: None };
+        let tab = self.new_app_tab(AppTabTarget::Workspace(workspace), record, None, None)?;
+        let screen = self.screen_of_surface(tab.surface.id)?;
+        self.finish_app_screen(workspace_id, screen, app, kind)
+    }
+
+    fn finish_app_screen(
+        self: &Arc<Self>,
+        workspace_id: &str,
+        screen: ScreenId,
+        app: &str,
+        kind: AppScreenKind,
+    ) -> anyhow::Result<EnsuredApp> {
         let screen_app = ScreenApp { kind, app: app.to_string(), own_workspace: true };
         let commit = self.commit_screen_app(screen, screen_app)?;
         let screen_id = self.public_screen(screen)?;
-        Ok(EnsuredApp { workspace_id, screen_id, revision: commit.revision, replayed: false })
+        Ok(EnsuredApp {
+            workspace_id: workspace_id.to_string(),
+            screen_id,
+            revision: commit.revision,
+            replayed: false,
+        })
     }
 
     /// The Home migration (section 4): the first screen of the home
@@ -178,20 +216,32 @@ impl Mux {
             }
             Some((screen, None)) => screen,
         };
-        // Resume a migration a crash interrupted: reuse its app tab.
-        let surface = match self.app_surface_in(screen, app) {
-            Some(surface) => surface,
-            None => {
-                let pane = self.with_state(|state| {
-                    state
-                        .workspace_by_id(workspace)
-                        .and_then(|item| item.screens.first())
-                        .map(|item| item.active_pane)
-                });
-                self.new_app_tab(AppTabTarget::Pane(pane), record, None, None)?.surface.id
-            }
-        };
-        // Give the app tab its own column unless it already has one alone.
+        // Resume a migration a crash interrupted with its app tab; when that
+        // no longer works (the screen changed between the commits), a fresh
+        // app tab takes its place and the old one stays an ordinary tab.
+        if let Some(surface) = self.app_surface_in(screen, app)
+            && self.place_home_app(screen, surface, screen_app.clone()).is_ok()
+        {
+            return Ok(());
+        }
+        let pane = self.with_state(|state| {
+            state
+                .workspace_by_id(workspace)
+                .and_then(|item| item.screens.first())
+                .map(|item| item.active_pane)
+        });
+        let surface = self.new_app_tab(AppTabTarget::Pane(pane), record, None, None)?.surface.id;
+        self.place_home_app(screen, surface, screen_app)
+    }
+
+    /// Give the Home app tab its own column unless it has one alone, then
+    /// the kind commit, which moves that column to index 0.
+    fn place_home_app(
+        self: &Arc<Self>,
+        screen: ScreenId,
+        surface: SurfaceId,
+        screen_app: ScreenApp,
+    ) -> anyhow::Result<()> {
         let (alone, anchor) = self
             .with_state(|state| {
                 let pane = state.pane_of(surface)?;
@@ -212,7 +262,7 @@ impl Mux {
             let anchor = anchor.context("the home app tab has no column anchor")?;
             self.move_tab_to_column(surface, anchor, None, None, None, None)?;
         }
-        self.commit_screen_app(screen, screen_app)?;
+        self.commit_screen_app_with(screen, screen_app, Some(surface))?;
         Ok(())
     }
 
@@ -290,19 +340,33 @@ impl Mux {
     /// One commit: `screen` becomes `screen_app` (its kind row, its index
     /// entry, and for `appColumn` the app tab's column moved to index 0 and
     /// pinned left, docked), with a fresh screen upsert in the same batch.
-    fn commit_screen_app(
+    pub(crate) fn commit_screen_app(
         self: &Arc<Self>,
         screen: ScreenId,
         screen_app: ScreenApp,
     ) -> anyhow::Result<ResourcePatchCommit> {
+        self.commit_screen_app_with(screen, screen_app, None)
+    }
+
+    /// [`Self::commit_screen_app`] with the app tab named (`None`: the first
+    /// app tab of the screen's app).
+    fn commit_screen_app_with(
+        self: &Arc<Self>,
+        screen: ScreenId,
+        screen_app: ScreenApp,
+        app_surface: Option<SurfaceId>,
+    ) -> anyhow::Result<ResourcePatchCommit> {
         let public = self.public_screen(screen)?;
+        // The fences every topology effect holds from its app-rule check to
+        // its commit: a kind commit never lands between the two.
+        let _fences = self.app_screen_fences();
         let fingerprint = json!({
             "operation": SCREEN_APP_OPERATION,
             "screen": public,
             "kind": screen_app.kind.as_str(),
             "app": screen_app.app,
         });
-        let app_surface = self.app_surface_in(screen, &screen_app.app);
+        let app_surface = app_surface.or_else(|| self.app_surface_in(screen, &screen_app.app));
         let commit = self.commit_resource_mutation_plan(
             &WorkspaceMutation::local(APP_MUTATION_ORIGIN),
             SCREEN_APP_OPERATION,
@@ -349,6 +413,9 @@ impl Mux {
                 .with_state_write(Box::new(
                     move |transaction, _result, changes| {
                         write_screen_app(transaction, &id, &row)?;
+                        // The kind commit itself is checked on the rows it
+                        // commits (the patch check ran before the row).
+                        crate::state::app_commit_rules::check_screen(transaction, &id)?;
                         changes.extend(crate::state::values::fresh_upserts(
                             transaction,
                             &[],
@@ -515,8 +582,8 @@ enum AppTabBrowser {
     Recorded(BrowserPublicId),
 }
 
-/// Move the column holding `app_pane` to index 0, pin it left (docked) and
-/// take the left flag from any other column. A screen without columns is the
+/// Move the column holding `app_pane` to index 0 and pin it left, docked
+/// ([`crate::state::app_rules::pin_screen`]). A screen without columns is the
 /// app column alone and stays as it is.
 fn arrange_app_column(screen: &mut Screen, app_pane: PaneId) {
     let Some(index) =
@@ -526,12 +593,6 @@ fn arrange_app_column(screen: &mut Screen, app_pane: PaneId) {
     };
     let column = screen.layout_columns.remove(index);
     screen.layout_columns.insert(0, column);
-    for column in screen.layout_columns.iter_mut().skip(1) {
-        if column.sticky.is_some_and(|sticky| sticky.edge == StickyEdge::Left) {
-            column.sticky = None;
-        }
-    }
-    screen.layout_columns[0].sticky =
-        Some(ColumnSticky { edge: StickyEdge::Left, mode: StickyMode::Docked });
     screen.sync_layout_column_projection();
+    crate::state::app_rules::pin_screen(screen);
 }

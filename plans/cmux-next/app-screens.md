@@ -10,7 +10,7 @@ lead.
 ```
 Screen { kind: ScreenKind, columns: [Column] ... }        // kind defaults to workspace
 ScreenKind = workspace | app { app: AppId } | appColumn { app: AppId }
-Column { ..., app: Option<AppId> }                        // the locked app column of appColumn
+Column { ..., app: bool }                                 // in memory only: column 0 of appColumn
 Tab kind `app` { app: AppId, route: Option<String> }      // frontend-rendered app page
 ```
 
@@ -50,10 +50,16 @@ Invariants (reducer and daemon, with tests):
 - Read shape: `screens[].kind: "workspace" | "app" | "appColumn"`, `screens[].app`, `columns[].app`
   (omitted for `workspace` and ordinary columns, so old clients see an ordinary screen with one
   sticky column).
-- Storage: `resource_screen_kinds(screen_id, kind, app_id)` and the app column flag in a side table
-  (`viewport_json` denies unknown fields; the `resource_column_docks` pattern: same transaction,
-  already-applied compare, overlay and validation at load, delete on tombstone). An older build
-  loads the screen as an ordinary screen with a pinned column: the app tab stays (no tab lost).
+- Storage (as built): `resource_screen_kinds(screen_id, kind, app_id)`, a side table older builds
+  ignore (screen_rows.rs pattern: deleted on tombstone, overlaid and shape-checked at load, rows
+  that lost their shape deleted in one transaction). The app column is not a stored flag: it is
+  column 0 of an `appColumn` screen (the whole screen while it has no other column), stored pinned
+  left and docked in `viewport_json` (so an older build sees an ordinary screen with one pinned
+  column), and marked `LayoutColumn.app` in memory so sticky normalization keeps its pin. Every
+  projection and plan step re-pins it; the commit check requires it. The app tab is `app_tabs`
+  next to its frontend browser row; app workspaces are `app_workspaces`. A closed app workspace
+  that `closed.reopen` brings back loads as an ordinary screen with its app tab; the next
+  `workspace.ensure_app` for that app restores its kind.
 
 ## 3. App (Swift, no cmux-tui window)
 

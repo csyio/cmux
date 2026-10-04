@@ -55,6 +55,8 @@ pub(crate) fn apply_resource_patch_unrecorded(
     revision: i64,
 ) -> anyhow::Result<ResourcePatch> {
     let patch = prune_unchanged_resource_changes(transaction, patch)?;
+    let apps = crate::state::app_commit_rules::before_patch(transaction)?;
     apply_effective_resource_patch(transaction, &patch, revision)?;
+    crate::state::app_commit_rules::check_committed_patch(transaction, &patch, apps)?;
     Ok(patch)
 }

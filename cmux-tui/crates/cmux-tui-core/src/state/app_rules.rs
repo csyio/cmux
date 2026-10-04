@@ -273,6 +273,56 @@ pub(crate) fn focused_ordinary_pane(state: &State) -> Option<PaneId> {
     (!in_app_column).then_some(pane)
 }
 
+/// Pin the app column of every appColumn screen with columns: column 0 is
+/// the app column, pinned left and docked, and no other column holds the
+/// left edge (A2 in the stored model). Runs before every projection and
+/// after every plan's state step, so a column added right of a lone app
+/// column (the base column starts unpinned) is stored pinned.
+pub(crate) fn pin_app_columns(state: &mut State) {
+    let screens = state
+        .resource_indexes
+        .screen_apps
+        .iter()
+        .filter(|(_, app)| app.kind == AppScreenKind::AppColumn)
+        .map(|(screen, _)| *screen)
+        .collect::<Vec<_>>();
+    if screens.is_empty() {
+        return;
+    }
+    for screen in state.workspaces.iter_mut().flat_map(|workspace| workspace.screens.iter_mut()) {
+        if screens.contains(&screen.id) {
+            pin_screen(screen);
+        }
+    }
+}
+
+/// [`pin_app_columns`] for one screen.
+pub(crate) fn pin_screen(screen: &mut crate::model::Screen) {
+    if screen.layout_columns.is_empty() {
+        return;
+    }
+    let left = ColumnSticky { edge: StickyEdge::Left, mode: crate::model::StickyMode::Docked };
+    let pinned = screen.layout_columns.iter().enumerate().all(|(index, column)| {
+        if index == 0 {
+            column.app && column.sticky == Some(left)
+        } else {
+            !column.app && column.sticky.is_none_or(|sticky| sticky.edge != StickyEdge::Left)
+        }
+    });
+    if pinned {
+        return;
+    }
+    for (index, column) in screen.layout_columns.iter_mut().enumerate() {
+        column.app = index == 0;
+        if index == 0 {
+            column.sticky = Some(left);
+        } else if column.sticky.is_some_and(|sticky| sticky.edge == StickyEdge::Left) {
+            column.sticky = None;
+        }
+    }
+    screen.sync_layout_column_projection();
+}
+
 /// The pane a workspace-level new tab goes to, and whether a column was
 /// made for it: [`route_new_tab_pane`] of the workspace's active pane.
 pub(crate) fn new_tab_target(
@@ -333,6 +383,7 @@ pub(crate) fn route_new_tab_pane(
     // The new column's split in the compat chain; a full index rebuild here
     // would drop the identity of the tab the caller has not placed yet.
     state.split_screens.insert(column_id, (workspace_index, screen_index, screen_id));
+    pin_screen(&mut state.workspaces[workspace_index].screens[screen_index]);
     Ok((created, true))
 }
 
@@ -409,6 +460,7 @@ pub(crate) fn load_screen_apps(state: &mut State, connection: &Connection) -> an
     }
     let app_tabs = read_app_tabs(connection)?;
     let mut loaded = std::collections::HashMap::new();
+    let mut stale = Vec::new();
     for (public, app) in rows {
         let screen = state
             .resource_indexes
@@ -435,12 +487,19 @@ pub(crate) fn load_screen_apps(state: &mut State, connection: &Connection) -> an
                 };
                 loaded.insert(screen, ScreenApp { own_workspace, ..app });
             }
-            None => {
-                connection
-                    .execute("DELETE FROM resource_screen_kinds WHERE screen_id = ?1", [&public])?;
-            }
+            None => stale.push(public),
         }
     }
+    if !stale.is_empty() {
+        // One transaction for every row that lost its screen or its shape.
+        let transaction = connection.unchecked_transaction()?;
+        for public in &stale {
+            transaction
+                .execute("DELETE FROM resource_screen_kinds WHERE screen_id = ?1", [public])?;
+        }
+        transaction.commit()?;
+    }
     state.resource_indexes.screen_apps = loaded;
+    pin_app_columns(state);
     Ok(())
 }
