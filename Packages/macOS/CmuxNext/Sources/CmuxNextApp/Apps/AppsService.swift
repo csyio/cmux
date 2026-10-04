@@ -22,6 +22,9 @@ final class AppsService {
     private var storeModel: AppStoreModel?
     /// App pages (`app:<id>`), one provider per app, registered on first open.
     private var appPages: [String: AppPanePage] = [:]
+    /// App tabs (`app-screens-v1` tab kind `app`) by tab id: their app and
+    /// the page view their app's provider mounted (`AppsService+Screens`).
+    var appTabs: [String: (app: String, view: AppTabView)] = [:]
     /// The App Store tabs (internal page), one store model per tab.
     private(set) lazy var storePages = AppStorePages { [unowned self] in makeStoreModel() }
     /// Runs previews of apps that are not installed (sample data, no grant).
@@ -99,11 +102,7 @@ final class AppsService {
     func openApp(_ appID: String, command: String? = nil, focus: Bool = true) throws(AppsServiceError) {
         guard let app = registry.app(appID), app.isActive else { throw .unknownApp }
         guard AppPanePage.opens(app) else { throw .noPage }
-        let provider = appPages[appID] ?? AppPanePage(appID: appID, apps: self)
-        if appPages[appID] == nil {
-            appPages[appID] = provider
-            services.pages.register(provider)
-        }
+        let provider = pageProvider(for: appID)
         guard services.pages.show(provider.page, in: services.windows.active, focus: focus) != nil else { throw .noWindow }
         if let command {
             guard let entry = AppCommandPalette.entries(registry, includingNonPalette: true).first(where: { $0.app.id == appID && $0.command.id == command }) else {
@@ -111,6 +110,16 @@ final class AppsService {
             }
             AppCommandPalette.run(entry, services: services)
         }
+    }
+
+    /// The one page provider of `appID`, registered with the internal pages
+    /// on first use. Page tabs and app tabs mount through it.
+    func pageProvider(for appID: String) -> AppPanePage {
+        if let provider = appPages[appID] { return provider }
+        let provider = AppPanePage(appID: appID, apps: self)
+        appPages[appID] = provider
+        services.pages.register(provider)
+        return provider
     }
 
     private func makeStoreModel() -> AppStoreModel {

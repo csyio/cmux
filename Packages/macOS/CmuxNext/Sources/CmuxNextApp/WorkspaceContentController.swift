@@ -24,6 +24,8 @@ final class WorkspaceContentController: LayoutPaneContentProvider {
     unowned let state: WindowState
     private(set) var handles = LayoutHandleMap()
     private(set) var panes: [LayoutPaneID: PaneController] = [:]
+    /// Panes of app screens: drawn without a tab strip (app-screens.md 3).
+    private(set) var chromelessPanes: Set<LayoutPaneID> = []
     private var observation: Task<Void, Never>?
     private var connectionObservation: Task<Void, Never>?
     private var attentionObservation: Task<Void, Never>?
@@ -80,9 +82,10 @@ final class WorkspaceContentController: LayoutPaneContentProvider {
 
     private func observe() {
         let workspace = workspace
-        apply(LayoutMapping.shared.map(workspace))
+        let daemon = daemon
+        apply(Self.map(workspace, daemon))
         observation = Task { [weak self] in
-            for await result in Observations({ LayoutMapping.shared.map(workspace) }) {
+            for await result in Observations({ Self.map(workspace, daemon) }) {
                 self?.apply(result)
             }
         }
@@ -108,7 +111,13 @@ final class WorkspaceContentController: LayoutPaneContentProvider {
     /// Re-applies the current store state (after a command response that
     /// may trail its own delta).
     func applyCurrent() {
-        apply(LayoutMapping.shared.map(workspace))
+        apply(Self.map(workspace, daemon))
+    }
+
+    /// The workspace as layout screens; app screens only from a daemon that
+    /// serves `app-screens-v1`.
+    private static func map(_ workspace: WorkspaceModel, _ daemon: DaemonService) -> LayoutMapping.Result {
+        LayoutMapping.shared.map(workspace, appScreens: daemon.supports(DaemonCapabilities.shared.appScreens))
     }
 
     private func apply(_ result: LayoutMapping.Result) {
@@ -117,6 +126,8 @@ final class WorkspaceContentController: LayoutPaneContentProvider {
         // No row op is sent to a daemon without rows-v1 (rows.md step 4).
         let rows = daemon.supports(DaemonCapabilities.shared.rows)
         if layoutModel.acceptsRowOps != rows { layoutModel.acceptsRowOps = rows }
+        chromelessPanes = Set(result.screens.flatMap(\.layout.chromelessPanes))
+        for (id, controller) in panes { controller.view.showsStrip = !chromelessPanes.contains(id) }
         layoutModel.apply(screens: result.screens)
         repairIfEmpty()
         sendTopology()
@@ -161,6 +172,7 @@ final class WorkspaceContentController: LayoutPaneContentProvider {
         guard let handle = handles.panes[pane], let model = daemon.store.pane(handle) else { return NSView() }
         let controller = PaneController(pane: model, daemon: daemon, layoutPaneID: pane, services: services, state: state)
         controller.workspace = self
+        controller.view.showsStrip = !chromelessPanes.contains(pane)
         panes[pane] = controller
         sendTopology()
         return controller.view
