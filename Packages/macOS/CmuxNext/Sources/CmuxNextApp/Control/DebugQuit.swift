@@ -1,10 +1,12 @@
+import AppKit
 import CmuxNextSettings
 
 #if DEBUG
 /// `debug.quit`: the quit sheet for automation (no system input needed).
 /// `{}` reports it; `{open: true}` starts a quit exactly as Cmd-Q does
 /// (interactive origin); `{remember: bool}` sets "Don't ask again";
-/// `{press: "keep" | "end-keep-layout" | "end-everything" | "quit" | "cancel"}`
+/// `{open: true, inactive: true}` does it as a Dock quit of an inactive app;
+/// `{press: "keep" | "quit-everything" | "confirm-quit-everything" | "end-everything" | "quit" | "cancel"}`
 /// clicks that button.
 @MainActor
 enum DebugQuit {
@@ -12,6 +14,8 @@ enum DebugQuit {
         let quit = services.quit
         if params["open"]?.boolValue == true {
             let started = !quit.isQuitting
+            // `inactive`: as a quit from the Dock while cmux is in the background.
+            if params["inactive"]?.boolValue == true { NSApp.deactivate() }
             quit.requestQuit(.interactive)
             return .object(["requested": .bool(started)])
         }
@@ -24,7 +28,8 @@ enum DebugQuit {
     }
 
     private static func report(_ quit: QuitCoordinator) -> [String: JSONValue] {
-        var result: [String: JSONValue] = ["quitting": .bool(quit.isQuitting), "asking": .bool(quit.sheet != nil)]
+        var result: [String: JSONValue] = ["quitting": .bool(quit.isQuitting), "asking": .bool(quit.sheet != nil),
+                                           "activated": .bool(quit.lastAskActivated)]
         guard let sheet = quit.sheet else { return result }
         let prompt = sheet.prompt
         result["prompt"] = .object([
