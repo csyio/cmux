@@ -18,6 +18,7 @@ pub mod gate;
 pub mod host;
 pub mod lease;
 pub mod mcp;
+pub mod observe;
 pub mod policy;
 pub mod protocol;
 pub mod provider;
