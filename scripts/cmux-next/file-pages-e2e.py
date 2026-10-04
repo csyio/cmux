@@ -107,9 +107,14 @@ def snapshot(name, page=None):
 
 
 def open_file(path):
-    """Open File... from the palette: the picker in file mode, a typed path, Return."""
+    """Open File... from the palette: the picker in file mode, a typed path, Return. When the
+    palette does not open (reported), `file.open` with the path runs over the socket: the same
+    action and handler as Open File... with a chosen file."""
     key("p", ["command", "shift"])
     if not wait("the palette opens", palette_open, 10):
+        print("palette did not open; windows: " + json.dumps(rpc("debug.window_list"))[:600], flush=True)
+        reply = rpc("action.run", {"action": "file open", "args": {"path": path, "where": "tab"}, "origin": "user"})
+        print(f"file.open over the socket: {json.dumps(reply)[:300]}", flush=True)
         return False
     type_text("Open File", target="palette")
     key("return", target="palette")
@@ -153,7 +158,9 @@ try:
     key("n", ["command"])
     focus = wait("a terminal has the keyboard", lambda: (lambda f: f if "terminal" in json.dumps(f) else None)(rpc("debug.focus") or {}), 20)
     expect("Cmd-N opens a workspace with a terminal", focus is not None, json.dumps(rpc("debug.focus"))[:300])
-    time.sleep(2)  # test harness: the shell reports its cwd
+    cwd = wait("the terminal reports the fixture as its folder",
+               lambda: FIXTURE in json.dumps(rpc("debug.surfaces") or {}), 30)
+    expect("the terminal's folder is the fixture (the workspace root)", cwd is not None, json.dumps(rpc("debug.surfaces"))[:600])
     snapshot("workspace")
 
     # 1. Markdown: Open File..., the markdown page, an edit, Cmd-S.
@@ -216,7 +223,7 @@ finally:
         time.sleep(1)  # test harness: the quit sheet, if any
         sheet = rpc("debug.quit") or {}
         if sheet.get("asking"):
-            print(f"debug.quit press: {rpc('debug.quit', {'press': 'end-everything'})}", flush=True)
+            print(f"debug.quit press: {rpc('debug.quit', {'press': 'quit'})}", flush=True)
         try:
             app.wait(timeout=20)
             print(f"quit {app.pid} exit {app.returncode}", flush=True)
