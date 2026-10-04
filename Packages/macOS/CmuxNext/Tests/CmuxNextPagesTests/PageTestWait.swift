@@ -5,7 +5,7 @@ import Testing
 /// named stage instead of hanging the run.
 @MainActor
 enum PageTestWait {
-    private final class Once<T> {
+    private final class Once<T: Sendable> {
         var continuation: CheckedContinuation<T?, Never>?
         func finish(_ value: T?) {
             continuation?.resume(returning: value)
@@ -14,7 +14,7 @@ enum PageTestWait {
     }
 
     /// `start` gets the function to call with the value; nil after `seconds`.
-    static func value<T>(_ stage: String, seconds: Double = 20, _ start: (@escaping (T) -> Void) -> Void) async -> T? {
+    static func value<T: Sendable>(_ stage: String, seconds: Double = 20, _ start: (@escaping (T) -> Void) -> Void) async -> T? {
         let once = Once<T>()
         let value: T? = await withCheckedContinuation { continuation in
             once.continuation = continuation
