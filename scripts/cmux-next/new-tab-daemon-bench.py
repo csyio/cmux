@@ -98,9 +98,12 @@ try:
                     order.append(key)
                 gaps[key].append((at - last) / 1000)
                 last = at
-            gaps.setdefault("(after last mark)", []).append(trace["total_us"] / 1000 - last)
+            gaps.setdefault("(after last mark)", []).append((trace["total_us"] - last) / 1000)
         order.append("(after last mark)")
         n = len(totals)
+        if os.environ.get("SPANS_DUMP"):
+            import shutil as _sh
+            _sh.copy(spans_path, os.environ["SPANS_DUMP"])
         print(f"spans over {n} new-tab traces; daemon total p50 {sorted(totals)[n // 2]:.1f} ms")
         print(f"{'gap before mark':58s} {'count':>5s} {'sum/tab':>8s} {'mean':>7s} {'p95':>7s}")
         for key in order:
