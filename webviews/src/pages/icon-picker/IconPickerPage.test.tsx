@@ -142,3 +142,11 @@ test("no results shows the empty state", async () => {
   await press("Enter");
   expect(host.calls.some((call) => call.op === IconPickerOps.finish)).toBe(false);
 });
+
+test("unmount (the page shell's reset) empties the root and ends the session stream", async () => {
+  await act(async () => picker.unmount());
+  expect(doc().getElementById("root")?.childElementCount).toBe(0);
+  // A later open from the host reaches no picker.
+  await act(async () => host.open({ id: "s2" }));
+  expect(doc().querySelector(".icon-picker")).toBeNull();
+});
