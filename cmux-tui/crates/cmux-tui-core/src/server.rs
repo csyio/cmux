@@ -16191,8 +16191,8 @@ mod sticky_columns_tests;
 mod rows_tests;
 
 #[cfg(test)]
-#[path = "server/split_kind_tests.rs"]
-mod split_kind_tests;
+#[path = "server/pane_browser_kind_tests.rs"]
+mod pane_browser_kind_tests;
 
 #[cfg(test)]
 #[path = "server/personal_terminal_tests.rs"]
