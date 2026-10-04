@@ -10,7 +10,7 @@ pub const TAB_COLUMN_RESPAWN_CAPABILITY: &str = "tab-column-respawn-v1";
 use super::*;
 
 /// `move-tab-to-column`: a new column holding the tab, after `after_column`
-/// (default: right of the anchor's column). `sticky` pins the new column;
+/// (default: right of the anchor's column). `dock` pins the new column;
 /// the column that held that edge scrolls again.
 #[derive(Deserialize)]
 pub(super) struct MoveTabToColumnParams {
@@ -24,7 +24,7 @@ pub(super) struct MoveTabToColumnParams {
     #[serde(default)]
     width: Option<f32>,
     #[serde(default)]
-    sticky: Option<crate::model::ColumnSticky>,
+    dock: Option<crate::model::ColumnDock>,
     #[serde(default)]
     respawn: Option<SplitRespawnRequest>,
     #[serde(default)]
@@ -41,7 +41,7 @@ pub(super) fn move_tab_to_column(
         screen,
         after_column,
         width,
-        sticky,
+        dock,
         respawn,
         transaction,
     } = params;
@@ -49,12 +49,10 @@ pub(super) fn move_tab_to_column(
     get_surface(mux, surface)?;
     let anchor = column_anchor(mux, pane, screen)?;
     let outcome = match respawn {
-        None => {
-            mux.move_tab_to_column(surface, anchor, after_column, width, sticky, transaction)?
-        }
+        None => mux.move_tab_to_column(surface, anchor, after_column, width, dock, transaction)?,
         Some(respawn) => {
             let respawn = respawn.into_respawn()?;
-            let destination = crate::mux::ColumnMove { pane: anchor, after_column, width, sticky };
+            let destination = crate::mux::ColumnMove { pane: anchor, after_column, width, dock };
             mux.move_tab_to_column_respawning(surface, destination, respawn, transaction)?
         }
     };
