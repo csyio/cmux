@@ -16374,6 +16374,8 @@ impl Mux {
             state.workspaces[index].name = name;
             state.workspace_revision = commit.revision;
             state.resource_revision = resource_revision;
+            // A companion rename turns its `default_title` false for good.
+            self.reload_presentation(&registry)?;
             let workspace_revision = commit.revision;
             let entity = crate::server::tree_entity_json(
                 &state,

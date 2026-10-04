@@ -551,18 +551,29 @@ fn companion_default_title_turns_false_on_rename_for_good() {
         let workspaces = snapshot["workspaces"].as_array().unwrap();
         workspaces.iter().find(|item| item["id"] == companion.as_str()).cloned().unwrap()
     };
+    let raw_extra = |wire: &mut Wire| {
+        let tree = wire.tree();
+        let workspaces = tree["workspaces"].as_array().unwrap();
+        let raw = workspaces.iter().find(|item| item["resource_id"] == companion.as_str());
+        let raw = raw.cloned().unwrap();
+        assert_eq!((raw["kind"].as_str(), raw["app"].as_str()), (Some("app_tabs"), Some(HOME)));
+        raw["extra"]["default_title"].clone()
+    };
+    assert_eq!(raw_extra(&mut wire), true);
     let created = extra(&wire);
     assert_eq!(created["name"], "Home Tabs", "{created}");
     assert_eq!(created["extra"]["kind"], "app_tabs", "{created}");
     assert_eq!(created["extra"]["default_title"], true, "{created}");
     wire.v2_ok("workspace.rename", json!({"workspace": companion, "name": "Mine"}), Some("r1"));
     assert_eq!(extra(&wire)["extra"]["default_title"], false);
+    assert_eq!(raw_extra(&mut wire), false);
     wire.v2_ok(
         "workspace.rename",
         json!({"workspace": companion, "name": "Home Tabs"}),
         Some("r2"),
     );
     assert_eq!(extra(&wire)["extra"]["default_title"], false, "renaming back keeps it false");
+    assert_eq!(raw_extra(&mut wire), false, "renaming back keeps it false");
 
     // An app with a recorded display name names its companion after it.
     let store_app = wire.v2_ok(
@@ -585,7 +596,8 @@ fn companion_default_title_turns_false_on_rename_for_good() {
     wire.mux.shutdown();
     drop(wire);
 
-    let wire = store.open();
+    let mut wire = store.open();
+    assert_eq!(raw_extra(&mut wire), false);
     let restarted = extra(&wire);
     assert_eq!(restarted["extra"]["kind"], "app_tabs", "{restarted}");
     assert_eq!(restarted["extra"]["default_title"], false, "{restarted}");

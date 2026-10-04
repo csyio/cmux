@@ -58,7 +58,7 @@ Invariants (reducer and daemon, with tests):
   after it, created when missing. Its default name is `"<display_name> Tabs"` (the optional
   `display_name` on `workspace.ensure_app`/`workspace.ensure_home`, the manifest's English
   name; else the app id). It reads back as `extra.kind: "app_tabs"`, `extra.app` (raw
-  `Workspace.kind`/`Workspace.app`) and `extra.default_title: true` until any rename, which
+  `Workspace.kind`/`Workspace.app`) and `extra.default_title: true` (raw `Workspace.extra.default_title`) until any rename, which
   turns it false for good. The marker, never the name, finds the companion.
 - `workspace.create {initial_content: "app", initial: {app, route?}}` and raw `create-workspace
   {initial}` make an ordinary workspace whose only tab is an app tab in one commit (the

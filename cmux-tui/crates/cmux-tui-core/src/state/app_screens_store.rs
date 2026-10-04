@@ -196,7 +196,24 @@ pub struct AppPresentation {
     pub tabs: HashMap<String, AppTabRecord>,
     /// The app of every live companion workspace (kind `app_tabs`), by
     /// workspace key.
-    pub companions: HashMap<String, String>,
+    pub companions: HashMap<String, CompanionRecord>,
+}
+
+/// A live companion workspace (kind `app_tabs`) as the raw tree reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompanionRecord {
+    pub app: String,
+    /// The name the daemon gave it.
+    pub default_name: String,
+    /// A committed rename happened (`default_title` is false for good).
+    pub renamed: bool,
+}
+
+impl CompanionRecord {
+    /// `default_title`: the daemon's name still stands.
+    pub fn default_title(&self, name: &str) -> bool {
+        !self.renamed && name == self.default_name
+    }
 }
 
 impl AppPresentation {
@@ -239,16 +256,23 @@ pub(crate) fn companion_app(
         .optional()?)
 }
 
-/// The app of every live companion workspace, keyed by workspace key.
-fn read_companions(connection: &Connection) -> anyhow::Result<HashMap<String, String>> {
+/// Every live companion workspace, keyed by workspace key.
+fn read_companions(connection: &Connection) -> anyhow::Result<HashMap<String, CompanionRecord>> {
     let mut statement = connection.prepare(
-        "SELECT rw.workspace_key, c.app_id
+        "SELECT rw.workspace_key, c.app_id, c.default_name, c.renamed
          FROM app_tab_workspaces AS c
          JOIN resource_workspaces AS rw ON rw.public_id = c.workspace_id
          WHERE rw.deleted_revision IS NULL",
     )?;
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([], |row| {
+            let record = CompanionRecord {
+                app: row.get(1)?,
+                default_name: row.get(2)?,
+                renamed: row.get::<_, i64>(3)? != 0,
+            };
+            Ok((row.get::<_, String>(0)?, record))
+        })?
         .collect::<Result<HashMap<_, _>, _>>()?;
     Ok(rows)
 }

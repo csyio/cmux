@@ -168,7 +168,7 @@ impl Mux {
         display_name: Option<&str>,
     ) -> anyhow::Result<EnsuredApp> {
         let screen_app = ScreenApp { kind, app: app.to_string() };
-        let commit = self.commit_screen_app_named(screen, screen_app, display_name)?;
+        let commit = self.commit_screen_app(screen, screen_app, display_name)?;
         let screen_id = self.public_screen(screen)?;
         Ok(EnsuredApp {
             workspace_id: workspace_id.to_string(),
@@ -250,20 +250,11 @@ impl Mux {
     }
 
     /// One commit: `screen` becomes `screen_app` (its kind row, its index
-    /// entry and its workspace's `app_workspaces` row), with a fresh screen
-    /// upsert in the same batch. The screen must already be one pane holding
-    /// only the app tab.
+    /// entry and its workspace's `app_workspaces` row, and the app's English
+    /// `display_name` when given: the default name of its companion), with a
+    /// fresh screen upsert in the same batch. The screen must already be one
+    /// pane holding only the app tab.
     pub(crate) fn commit_screen_app(
-        self: &Arc<Self>,
-        screen: ScreenId,
-        screen_app: ScreenApp,
-    ) -> anyhow::Result<ResourcePatchCommit> {
-        self.commit_screen_app_named(screen, screen_app, None)
-    }
-
-    /// [`Self::commit_screen_app`], recording the app's English
-    /// `display_name` (the default name of its companion) in the same commit.
-    pub(crate) fn commit_screen_app_named(
         self: &Arc<Self>,
         screen: ScreenId,
         screen_app: ScreenApp,

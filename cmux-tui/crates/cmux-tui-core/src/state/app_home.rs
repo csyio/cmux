@@ -78,7 +78,7 @@ impl Mux {
         // lone screen that is exactly the Home app tab.
         if let [(screen, None)] = screens.as_slice()
             && self.is_app_shaped(*screen, app)
-            && self.commit_screen_app_named(*screen, screen_app.clone(), display_name).is_ok()
+            && self.commit_screen_app(*screen, screen_app.clone(), display_name).is_ok()
         {
             return Ok(());
         }
@@ -94,7 +94,7 @@ impl Mux {
         let record = AppTabRecord { app: app.to_string(), route: None };
         let tab = self.new_app_tab(AppTabTarget::Workspace(workspace), record, None, None)?;
         let screen = self.screen_of_surface(tab.surface.id)?;
-        self.commit_screen_app_named(screen, screen_app, display_name)?;
+        self.commit_screen_app(screen, screen_app, display_name)?;
         Ok(())
     }
 

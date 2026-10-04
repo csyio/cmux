@@ -18,7 +18,7 @@
 //! These run before a change, so a refusal changes nothing (A4); the check
 //! in the commit (app_commit_rules.rs) is the authoritative one. A new tab
 //! sent to an app workspace (not to a pane) is not refused: it goes to the
-//! app workspace's companion ordinary workspace (app_screens.rs).
+//! app workspace's companion workspace (app_home.rs).
 
 use cmux_layout_reducer::{AppAction, AppRefusal, LayoutOpKind, LayoutState, Reject, ScreenKind};
 use rusqlite::Connection;
@@ -157,16 +157,6 @@ pub(crate) fn focused_ordinary_pane(state: &State) -> Option<PaneId> {
     let pane = state.active_pane()?;
     let screen = pane_screen(state, pane)?;
     (reducer_kind(state, screen) == ScreenKind::Workspace).then_some(pane)
-}
-
-/// Whether `workspace` is an app workspace: it holds an app screen.
-pub(crate) fn is_app_workspace(state: &State, workspace: WorkspaceId) -> bool {
-    state.workspace_by_id(workspace).is_some_and(|workspace| {
-        workspace
-            .screens
-            .iter()
-            .any(|screen| state.resource_indexes.screen_apps.contains_key(&screen.id))
-    })
 }
 
 /// A layout op of a staged plan, on `model`, the projection of `state`.

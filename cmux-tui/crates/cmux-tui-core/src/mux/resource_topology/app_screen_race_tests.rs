@@ -46,7 +46,7 @@ fn a_kind_commit_waits_for_the_effect_between_its_check_and_its_commit() {
         let racing = hook_mux.clone();
         let handle = std::thread::spawn(move || {
             let app = ScreenApp { kind: AppScreenKind::App, app: APP.to_string() };
-            racing.commit_screen_app(screen, app).map(|_| ())
+            racing.commit_screen_app(screen, app, None).map(|_| ())
         });
         *hook_racer.lock().unwrap() = Some(handle);
     }));

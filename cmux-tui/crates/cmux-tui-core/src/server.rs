@@ -11321,6 +11321,7 @@ fn workspace_json(
         "marked_unread": presentation.is_some_and(|presentation| presentation.marked_unread),
         "kind": home::raw_workspace_kind(&notifications.presentation, &workspace.key),
         "app": home::raw_workspace_app(&notifications.presentation, &workspace.key),
+        "extra": home::raw_workspace_extra(&notifications.presentation, workspace),
         "unread_count": workspace_unread_count(state, workspace, notifications),
         "active": index == state.active_workspace,
         "screens": workspace.screens.iter().enumerate().map(|(screen_index, screen)| {
@@ -26823,6 +26824,7 @@ mod tests {
             Command::CreateWorkspace {
                 name: Some("alt-n".into()),
                 key: Some("018f6e21-7b70-7e70-8000-0000000000aa".into()),
+                initial: None,
                 mutation: MutationRequest {
                     origin: Some("chrome-gui".into()),
                     mutation_id: Some("alt-n-create".into()),
