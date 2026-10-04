@@ -122,7 +122,8 @@ public extension PageDescriptor {
         nativeOps: [PageNativeOp.actionRun],
         actions: ["palette.openCmuxSettingsFile", "openSettings", "browserProfile.new", "browserProfile.rename",
                   "browserProfile.setColor", "browserProfile.clearColor", "browserProfile.setIcon", "browserProfile.clearIcon",
-                  "browserProfile.manageExtensions", "browserProfile.delete"])
+                  "browserProfile.manageExtensions", "browserProfile.delete", "reloadConfiguration"],
+        dynamicPrefixes: ["backdrop"])
 
     /// The History page (react-pages.md 2).
     static let history = PageDescriptor(
