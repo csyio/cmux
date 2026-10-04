@@ -50,11 +50,21 @@ PROBE = """(() => { window.__cmuxProbe = {pending: true}; (async () => {
   out.ua = navigator.userAgent;
   window.__cmuxProbe = out; })(); return 'started'; })()"""
 
+seen_github = set()
+
 def probe(label, engine):
     r = {"open": rpc("action.run", {"action": "openBrowser", "args": {"url": "https://github.com/login", "engine": engine}})}
     time.sleep(8)
-    r["focus"] = rpc("debug.key", {"key": "tab", "modifiers": ["control", "shift"]})
-    time.sleep(1)
+    # Select the new github tab as a person would: Ctrl-Tab until the focused page is github.
+    r["focus"] = []
+    for _ in range(12):
+        st = rpc("browser.page.state", {})
+        r["focus"].append(st)
+        if isinstance(st, dict) and "github.com" in str(st.get("url", "")) and st.get("tab") not in seen_github:
+            seen_github.add(st.get("tab"))
+            break
+        rpc("debug.key", {"key": "tab", "modifiers": ["control"]})
+        time.sleep(1)
     r["start"] = rpc("browser.page.eval", {"script": PROBE})
     time.sleep(4)
     r["result"] = rpc("browser.page.eval", {"script": "JSON.stringify(window.__cmuxProbe)"})
