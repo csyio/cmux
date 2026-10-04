@@ -32,6 +32,8 @@ extension KeyRouter {
         if implied.browser { bits.insert(.browserFocused) }
         if implied.agent { bits.insert(.agentPaneFocused) }
         if implied.diff { bits.insert(.diffViewerFocused) }
+        if implied.markdown { bits.insert(.markdownFocused) }
+        if implied.filePreview { bits.insert(.filePreviewFocused) }
         var context = KeyContext(bits: bits)
         context[KeyContext.windowKind] = .string(KeyContext.WindowKindValue.main)
         let resolved = focus.resolved

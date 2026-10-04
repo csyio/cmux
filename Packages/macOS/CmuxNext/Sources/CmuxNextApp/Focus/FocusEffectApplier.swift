@@ -363,6 +363,8 @@ final class FocusEffectApplier: FocusEffectApplying {
         if context.browser { next.insert(.browserFocused) }
         if context.agent { next.insert(.agentPaneFocused) }
         if context.diff { next.insert(.diffViewerFocused) }
+        if context.markdown { next.insert(.markdownFocused) }
+        if context.filePreview { next.insert(.filePreviewFocused) }
         if registry.context != next { registry.context = next }
     }
 

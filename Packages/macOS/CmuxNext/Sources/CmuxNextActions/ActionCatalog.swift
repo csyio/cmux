@@ -83,6 +83,7 @@ public nonisolated enum ActionCatalog {
         BrowserActionCatalog.self,
         BrowserToolbarActionCatalog.self,
         ViewerActionCatalog.self,
+        FilePageActionCatalog.self,
         PageInfoActionCatalog.self,
         ExtensionActionCatalog.self,
         BrowserProfileActionCatalog.self,

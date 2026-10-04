@@ -23,22 +23,36 @@ struct FilePageTabTests {
         watch.knownHash = FileDocument.hash(Data("v1".utf8))
         watch.start()
         defer { watch.stop() }
+        // Kernel events arrive on their own time (a read can add an access-time event, which the
+        // watch drops by the file's stamp): wait for the debounce to start, let the burst land in
+        // real time, then move the injected clock past the debounce until the result shows.
+        func settleAndFire() async {
+            await clock.sleepers(atLeast: 1)
+            try? await Task.sleep(for: .milliseconds(300))
+            clock.advance(by: .milliseconds(150))
+        }
         // The initial arming reports once; an unchanged file pushes nothing.
-        await clock.sleepers(atLeast: 1)
-        clock.advance(by: .milliseconds(150))
-        #expect(await DiffSidecarProcessTests.becomesTrue { watch.pendingCount == 0 })
+        await settleAndFire()
+        #expect(await DiffSidecarProcessTests.becomesTrue {
+            clock.advance(by: .milliseconds(150))
+            return watch.pendingCount == 0
+        })
         #expect(pushed.isEmpty)
         try Data("v2".utf8).write(to: file)
         try Data("v3".utf8).write(to: file)
-        await clock.sleepers(atLeast: 1)
-        clock.advance(by: .milliseconds(150))
-        #expect(await DiffSidecarProcessTests.becomesTrue { !pushed.isEmpty })
+        await settleAndFire()
+        #expect(await DiffSidecarProcessTests.becomesTrue {
+            clock.advance(by: .milliseconds(150))
+            return !pushed.isEmpty
+        })
         #expect(pushed.count == 1)
         #expect(pushed.last??.text == "v3")
         try FileManager.default.removeItem(at: file)
-        await clock.sleepers(atLeast: 1)
-        clock.advance(by: .milliseconds(150))
-        #expect(await DiffSidecarProcessTests.becomesTrue { pushed.count == 2 })
+        await settleAndFire()
+        #expect(await DiffSidecarProcessTests.becomesTrue {
+            clock.advance(by: .milliseconds(150))
+            return pushed.count == 2
+        })
         #expect(pushed.last.map { $0 == nil } == true, "deleted")
     }
 
