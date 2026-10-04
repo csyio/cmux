@@ -25,8 +25,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use cmux_layout_reducer::{
-    Column, LayoutOp, LayoutOpKind, LayoutState, Row, Screen, TabContent, Workspace, apply,
-    introduced_violations, placement_mismatches,
+    Column, LayoutOp, LayoutOpKind, LayoutState, Row, Screen, TabContent, Violation, Workspace,
+    apply, introduced_violations, placement_mismatches,
 };
 use serde_json::json;
 
@@ -171,6 +171,13 @@ pub(crate) fn validate_layout_transition(
     model: Option<&LayoutState>,
     after: &State,
 ) -> anyhow::Result<()> {
+    let introduced = introduced_violations(before, &project(after), &BTreeSet::new());
+    if let Some(screen) = introduced.iter().find_map(|violation| match violation {
+        Violation::AppScreenShape { screen } => Some(*screen),
+        _ => None,
+    }) {
+        return Err(crate::state::app_rules::shape_rule(after, screen));
+    }
     let problems = transition_problems(before, model, after);
     if problems.is_empty() { Ok(()) } else { Err(rejection(operation, problems)) }
 }

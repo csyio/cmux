@@ -322,15 +322,17 @@ pub(crate) fn route_new_tab_pane(
         active_at: 0,
         focused_at: 0,
     });
-    let (column, base) = (next_id(), next_id());
+    let (column_id, base) = (next_id(), next_id());
     let screen = &mut state.workspaces[workspace_index].screens[screen_index];
-    let column = crate::model::LayoutColumn::single(column, 0.5, created);
+    let column = crate::model::LayoutColumn::single(column_id, 0.5, created);
     anyhow::ensure!(
         screen.insert_layout_column_after(pane, base, column),
         "the app column disappeared while placing a new tab"
     );
     state.resource_indexes.pane_screen.insert(created, screen_id);
-    crate::Mux::rebuild_split_screen_index(state);
+    // The new column's split in the compat chain; a full index rebuild here
+    // would drop the identity of the tab the caller has not placed yet.
+    state.split_screens.insert(column_id, (workspace_index, screen_index, screen_id));
     Ok((created, true))
 }
 
@@ -346,6 +348,17 @@ pub(crate) fn refuse_op(
         Err(Reject::AppColumnLocked(screen)) => Err(rule(state, AppRefusal::ColumnLocked, screen)),
         Err(_) => Ok(()),
     }
+}
+
+/// A1/A2 broken by a staged layout change (an introduced
+/// `Violation::AppScreenShape` of the reducer's check): the refusal of the
+/// screen's kind, so a tab-group or screen move keeps the typed error.
+pub(crate) fn shape_rule(state: &State, screen: ScreenId) -> anyhow::Error {
+    let refusal = match reducer_kind(state, screen) {
+        ScreenKind::AppColumn => AppRefusal::ColumnLocked,
+        _ => AppRefusal::ScreenFixed,
+    };
+    rule(state, refusal, screen)
 }
 
 /// The raw-only mapping of an app reject from the reducer, where the public
