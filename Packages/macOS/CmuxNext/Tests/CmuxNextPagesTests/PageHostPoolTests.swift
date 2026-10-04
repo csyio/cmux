@@ -17,13 +17,12 @@ import WebKit
         var cancelled = 0
         var emit: (@MainActor (JSONValue) -> Void)?
         var slow: CheckedContinuation<JSONValue, any Error>?
-        var slowArrived: CheckedContinuation<Void, Never>?
 
         func call(_ op: String, params: JSONValue, context: PageCallContext) async throws -> JSONValue {
             calls.append(op)
             guard op == "cmux.shell.probe.slow" else { return ["ok": true] }
-            slowArrived?.resume()
-            slowArrived = nil
+            slowArrivedDone?()
+            slowArrivedDone = nil
             return try await withCheckedThrowingContinuation { slow = $0 }
         }
 
@@ -35,8 +34,11 @@ import WebKit
 
         func waitForSlow() async {
             guard slow == nil else { return }
-            await withCheckedContinuation { slowArrived = $0 }
+            _ = await PageTestWait.value("slow call reached the provider") { (done: @escaping (Bool) -> Void) in
+                self.slowArrivedDone = { done(true) }
+            }
         }
+        var slowArrivedDone: (() -> Void)?
 
         func finish() {
             slow?.resume(returning: ["late": true])
@@ -101,15 +103,16 @@ import WebKit
         return try JSONDecoder().decode(Seen.self, from: Data(text.utf8))
     }
 
-    static func reply(_ send: (@escaping (Result<JSONValue, PageError>) -> Void) -> Void) async -> Result<JSONValue, PageError> {
-        await withCheckedContinuation { continuation in send { continuation.resume(returning: $0) } }
+    static func reply(_ stage: String = "host call reply",
+                      _ send: (@escaping (Result<JSONValue, PageError>) -> Void) -> Void) async -> Result<JSONValue, PageError> {
+        await PageTestWait.value(stage, send) ?? .failure(.closed)
     }
 
     /// A pool claim that returns once the shell has mounted the page.
     static func claim(_ pool: PageHostPool, _ descriptor: PageDescriptor, routes: [PageRoute] = [],
                       window: NSWindow) async throws -> PageWebView {
         var host: PageWebView?
-        let result = await reply { done in
+        let result = await reply("claim of \(descriptor.id) mounted") { done in
             host = pool.claim(descriptor, routes: routes, window: window, mounted: done)
             if host == nil { done(.failure(.closed)) }
         }
@@ -175,11 +178,11 @@ import WebKit
         var policy = PageHostPool.Policy()
         policy.idleInput = .milliseconds(5)
         let pool = PageHostPool(policy: policy, activity: { 0 }, isTrackingMenu: { false })
-        var ready: [CheckedContinuation<Void, Never>] = []
-        pool.onSpareReady = { _ in ready.forEach { $0.resume() }; ready.removeAll() }
         func spare() async {
             if pool.isSpareReady { return }
-            await withCheckedContinuation { ready.append($0) }
+            _ = await PageTestWait.value("spare ready") { (done: @escaping (Bool) -> Void) in
+                pool.onSpareReady = { _ in done(true) }
+            }
         }
         #expect(pool.claim(.shellProbe, routes: [], window: window) == nil)
         await spare()
@@ -209,11 +212,11 @@ import WebKit
         var policy = PageHostPool.Policy()
         policy.idleInput = .milliseconds(5)
         let pool = PageHostPool(policy: policy, activity: { 0 }, isTrackingMenu: { false })
-        var ready: [CheckedContinuation<Void, Never>] = []
-        pool.onSpareReady = { _ in ready.forEach { $0.resume() }; ready.removeAll() }
         func spare() async {
             if pool.isSpareReady { return }
-            await withCheckedContinuation { ready.append($0) }
+            _ = await PageTestWait.value("spare ready") { (done: @escaping (Bool) -> Void) in
+                pool.onSpareReady = { _ in done(true) }
+            }
         }
         pool.follow(window)
         pool.noteLikely()
@@ -245,12 +248,12 @@ import WebKit
         var reads = 0
         // Busy (terminal output, frames, input) for the first deadlines, then quiet.
         let pool = PageHostPool(policy: policy, activity: { reads += 1; return UInt64(min(reads, 6)) }, isTrackingMenu: { false })
-        var built: CheckedContinuation<Void, Never>?
-        pool.onSpareReady = { _ in built?.resume(); built = nil }
         pool.follow(window)
         #expect(pool.spareHost == nil)
-        pool.noteLikely()
-        await withCheckedContinuation { built = $0 }
+        _ = await PageTestWait.value("spare built after the quiet period") { (done: @escaping (Bool) -> Void) in
+            pool.onSpareReady = { _ in done(true) }
+            pool.noteLikely()
+        }
         #expect(reads >= 7)
         #expect(pool.isSpareReady)
         pool.dropSpare()

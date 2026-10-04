@@ -77,11 +77,11 @@ struct PageShellBenchTests {
         var policy = PageHostPool.Policy()
         policy.idleInput = .milliseconds(5)
         let pool = PageHostPool(policy: policy, activity: { 0 }, isTrackingMenu: { false })
-        var ready: [CheckedContinuation<Void, Never>] = []
-        pool.onSpareReady = { _ in ready.forEach { $0.resume() }; ready.removeAll() }
         func spare() async {
             if pool.isSpareReady { return }
-            await withCheckedContinuation { ready.append($0) }
+            _ = await PageTestWait.value("bench spare ready") { (done: @escaping (Bool) -> Void) in
+                pool.onSpareReady = { _ in done(true) }
+            }
         }
         let testProcessBefore = Self.footprintMB(getpid())
         pool.follow(parked)
@@ -104,19 +104,21 @@ struct PageShellBenchTests {
                 let session: JSONValue = ["id": .string("bench-\(round)"), "tab": "emoji"]
                 pool.spareHost?.keepRenderingWhenCovered()
                 var mountedAt: Double?
-                var mountWaiter: CheckedContinuation<Void, Never>?
+                var mountDone: ((Bool) -> Void)?
                 let start = CACurrentMediaTime()
-                let host = try #require(pool.claim(.iconPicker, routes: [], context: session, window: window) { _ in
+                let host = try #require(pool.claim(.iconPicker, routes: [], context: session, window: window) { reply in
                     mountedAt = CACurrentMediaTime()
-                    mountWaiter?.resume()
-                    mountWaiter = nil
+                    if case .failure(let error) = reply { print("PAGE_TEST_STAGE claim failed: \(error.code) \(error.message)") }
+                    mountDone?(true)
                 })
                 if let content = window.contentView {
                     host.frame = content.bounds
                     content.addSubview(host)
                 }
                 claimMs.append((CACurrentMediaTime() - start) * 1000)
-                if mountedAt == nil { await withCheckedContinuation { mountWaiter = $0 } }
+                if mountedAt == nil {
+                    _ = await PageTestWait.value("bench claim mounted") { (done: @escaping (Bool) -> Void) in mountDone = done }
+                }
                 mountedMs.append(((mountedAt ?? start) - start) * 1000)
                 let mounted = try await host.webKitView.callAsyncJavaScript(
                     """
