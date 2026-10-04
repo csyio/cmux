@@ -519,6 +519,7 @@ let package = Package(
             name: "CmuxNextUpdater",
             dependencies: [
                 "CmuxNextDesign",
+                "CmuxNextWakeups",
                 .product(name: "CmuxUpdater", package: "CmuxUpdater"),
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
