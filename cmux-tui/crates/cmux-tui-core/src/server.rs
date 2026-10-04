@@ -16141,6 +16141,10 @@ mod sticky_columns_tests;
 mod rows_tests;
 
 #[cfg(test)]
+#[path = "server/app_screens_tests.rs"]
+mod app_screens_tests;
+
+#[cfg(test)]
 #[path = "server/personal_terminal_tests.rs"]
 mod personal_terminal_tests;
 
