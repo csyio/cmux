@@ -1,4 +1,6 @@
+import CmuxNextAccounts
 import CmuxNextPages
+import CmuxNextSettings
 import Foundation
 
 /// Builds the app's React pages with their routes (its own type, not an `AppServices` member:
@@ -39,6 +41,16 @@ struct PageFactory {
         let provider = SettingsPageProvider(settings: settings, domains: { [weak services] in
             ["themes": services?.themes?.catalog.names ?? [], "font_families": SettingsPageDomains.fontFamilies, "sounds": SettingsPageDomains.sounds]
         }, hostLists: { [weak services] in services?.settingsWindow.pageHostLists() ?? .null })
+        let accounts = services.accounts.model
+        provider.accountsState = { (try? JSONValue.parse(JSONEncoder().encode(accounts.pageState))) ?? .null }
+        provider.accountsRun = { params in
+            guard let action = AccountsPageAction(action: params["action"]?.stringValue ?? "", provider: params["provider"]?.stringValue,
+                                                  account: params["account"]?.stringValue, secret: params["secret"]?.stringValue) else {
+                throw PageError.invalidParams("unknown accounts action")
+            }
+            if let error = await accounts.perform(action) { return ["error": .string(error)] }
+            return .object([:])
+        }
         let native = AppPageNativeProvider(services: services, page: .settings)
         let routes = [PageRoute(prefix: "cmux.settings.", provider: provider), PageRoute(prefix: "cmux.app.", provider: native)]
         let page = PageWebView(descriptor: .settings, routes: routes, route: route)
