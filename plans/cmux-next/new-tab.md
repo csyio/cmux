@@ -225,6 +225,19 @@ N1 and N2 start now (webviews only). N4 needs a fleet build for every measuremen
   files waits for the durable-sessions lead's judgement on power-cut recovery. (3) The spare stays
   as is; its follow-ups (prompt reap, adoption by split/new-pane/new-workspace) are frozen until
   IX2/IX3 lands, then keep or delete it with numbers.
+- Debug marks (`CMUX_TUI_DEBUG_SPANS`, 2026-10-04, fleet daemons nt13 = marks only and nt14 =
+  marks plus barrier sync, cmux-lawrence-2, 2 rounds of 20 tabs each, login shell). Daemon time
+  from request to reply, p50: nt13 94.9 / 76.8 ms, nt14 55.6 / 45.1 ms. Mean per tab, nt13 then
+  nt14: host Launch handling in the host process (`host.launch_ready`) 36-26 then 23-18 ms;
+  publication lock 10 then 0.4 ms; `persist_workspace` 10-11 then 3 ms; 5 registry SQLite
+  commits 24-31 then 20-23 ms; bootstrap, connect and lock waits 1-3 ms. The unexplained ~40 ms
+  was the host Launch step (its record write did 2 full syncs) plus the publication lock and
+  workspace mirror syncs. Remaining, after the barrier sync: host Launch about 20 ms (PTY and
+  terminal setup in the host) and the SQLite commits about 20 ms, which reply-on-accept
+  (`plans/cmux-next/new-tab-accept-first.md`) takes off the reply path.
+- Barrier sync for the host record, publication lock and workspace mirror (coordinator approval
+  after the durable-sessions lead's audit): reply p50 -40 to -42 percent in the bench above.
+  The exit record, the SQLite registry and the session journal keep F_FULLFSYNC.
 
 ## 9. Leo's ideas
 
