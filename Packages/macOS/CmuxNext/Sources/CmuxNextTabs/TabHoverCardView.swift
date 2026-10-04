@@ -132,6 +132,9 @@ final class TabHoverCardView: NSView {
         thumbnailTop?.constant = visible ? Metrics.space4 : 0
     }
 
+    /// The thumbnail the card shows (tests).
+    var thumbnailImage: CGImage? { thumbnail.layer?.contents.map { $0 as! CGImage } }
+
     func setThumbnail(_ image: CGImage?) {
         guard let layer = thumbnail.layer else { return }
         performWithTheme {
