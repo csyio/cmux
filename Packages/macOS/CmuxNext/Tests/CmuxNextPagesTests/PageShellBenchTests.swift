@@ -96,30 +96,47 @@ struct PageShellBenchTests {
         var results: [String: Any] = [:]
         for (label, window) in [("sameWindow", parked), ("crossWindow", other)] {
             var claimMs: [Double] = []
+            var mountedMs: [Double] = []
             var firstFrameMs: [Double] = []
+            var cells: [Double] = []
             for round in 0..<Self.rounds {
                 await spare()
                 let session: JSONValue = ["id": .string("bench-\(round)"), "tab": "emoji"]
+                pool.spareHost?.keepRenderingWhenCovered()
+                var mountedAt: Double?
+                var mountWaiter: CheckedContinuation<Void, Never>?
                 let start = CACurrentMediaTime()
-                let host = try #require(pool.claim(.iconPicker, routes: [], context: session, window: window))
+                let host = try #require(pool.claim(.iconPicker, routes: [], context: session, window: window) { _ in
+                    mountedAt = CACurrentMediaTime()
+                    mountWaiter?.resume()
+                    mountWaiter = nil
+                })
                 if let content = window.contentView {
                     host.frame = content.bounds
                     content.addSubview(host)
                 }
                 claimMs.append((CACurrentMediaTime() - start) * 1000)
+                if mountedAt == nil { await withCheckedContinuation { mountWaiter = $0 } }
+                mountedMs.append(((mountedAt ?? start) - start) * 1000)
                 let mounted = try await host.webKitView.callAsyncJavaScript(
                     """
                     const frame = await Promise.race([new Promise((r) => requestAnimationFrame(() => r(true))),
-                                                      new Promise((r) => setTimeout(() => r(false), 2000))]);
-                    return frame ? document.querySelectorAll('.icon-cell').length : -1;
+                                                      new Promise((r) => setTimeout(() => r(false), 500))]);
+                    const cells = document.querySelectorAll('.icon-cell').length;
+                    return frame ? cells : -cells - 1;
                     """,
                     contentWorld: .page) as? Int ?? 0
-                firstFrameMs.append((CACurrentMediaTime() - start) * 1000)
-                #expect(mounted != -1, "no animation frame in 2 s (window not on screen?)")
-                #expect(mounted > 0, "the picker rendered no cells")
+                // A console that never renders gives no animation frame: then only the mount is timed.
+                if mounted >= 0 { firstFrameMs.append((CACurrentMediaTime() - start) * 1000) }
+                cells.append(Double(mounted >= 0 ? mounted : -mounted - 1))
+                #expect((mounted >= 0 ? mounted : -mounted - 1) > 0, "the picker mounted no cells")
                 pool.release(host)
             }
-            results[label] = ["claimMs": Self.stats(claimMs), "claimToFirstFrameMs": Self.stats(firstFrameMs)]
+            results[label] = [
+                "claimMs": Self.stats(claimMs), "claimToMountedReplyMs": Self.stats(mountedMs),
+                "claimToFirstFrameMs": firstFrameMs.isEmpty ? ["n": 0] : Self.stats(firstFrameMs),
+                "cellsMounted": Self.stats(cells),
+            ]
         }
         results["makeSpareMs"] = Self.stats(pool.spans.filter { $0.name == "pool.makeSpare" }.map(\.milliseconds))
         results["parkMs"] = Self.stats(pool.spans.filter { $0.name == "pool.makeSpare.park" }.map(\.milliseconds))
