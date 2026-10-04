@@ -128,12 +128,17 @@ extension WebKitTab: PageInfoProviding {
     }
 
     /// Records the server's certificate when WebKit's own evaluation fails,
-    /// so Page Info can show "Certificate is not valid" on the error page.
+    /// so Page Info can show "Certificate is not valid" on the error page;
+    /// asks for HTTP sign-in credentials (`BrowserHTTPAuth`).
     public func webView(
         _ webView: WKWebView,
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping @MainActor (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
+        // HTTP basic, digest and NTLM sign-in: a cmux dialog on this tab (R96).
+        if BrowserHTTPAuth.asksUser(challenge.protectionSpace.authenticationMethod) {
+            return askHTTPCredentials(challenge, completionHandler: completionHandler)
+        }
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
            let trust = challenge.protectionSpace.serverTrust {
             // Evaluation can fetch intermediates or revocation data: never
