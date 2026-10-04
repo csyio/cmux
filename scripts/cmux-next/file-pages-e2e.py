@@ -113,7 +113,7 @@ def open_file(path):
     key("p", ["command", "shift"])
     if not wait("the palette opens", palette_open, 10):
         print("palette did not open; windows: " + json.dumps(rpc("debug.window_list"))[:600], flush=True)
-        reply = rpc("action.run", {"action": "file open", "args": {"path": path, "where": "tab"}, "origin": "user"})
+        reply = rpc("action.run", {"action": "file open", "args": {"path": path, "where": "tab"}, "origin": "script"})
         print(f"file.open over the socket: {json.dumps(reply)[:300]}", flush=True)
         return False
     type_text("Open File", target="palette")
