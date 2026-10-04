@@ -1311,7 +1311,7 @@ impl Mux {
                 let first_pane = first.pane.context("pane selector has no live pane")?;
                 let second_pane = second.pane.context("other pane selector has no live pane")?;
                 anyhow::ensure!(first_pane != second_pane, "cannot swap a pane with itself");
-                crate::state::app_rules::refuse_swap(state, first_pane, second_pane)?;
+                app_rules::refuse_swap(state, first_pane, second_pane)?;
                 let first_id = first.path.pane.context("pane selector has no public id")?;
                 let second_id = second.path.pane.context("other pane selector has no public id")?;
                 let first_screen =
@@ -1519,9 +1519,7 @@ impl Mux {
                     .map(|pane| (pane.id, pane.tabs.len())))
             })?;
             if let Some((pane, index)) = target {
-                self.with_state(|state| {
-                    crate::state::app_rules::refuse_move_tab(state, surface, pane)
-                })?;
+                self.with_state(|state| app_rules::refuse_move_tab(state, surface, pane))?;
                 anyhow::ensure!(self.move_tab(surface, pane, index), "tab could not be moved");
                 return Ok(());
             }
@@ -4084,7 +4082,7 @@ impl Mux {
         let resolved = self
             .resolve_resource_path_in_state(state, registry, target, selectors)
             .map_err(anyhow::Error::new)?;
-        crate::state::app_rules::refuse_effect(state, operation, &resolved, fields)?;
+        app_rules::refuse_effect(state, operation, &resolved, fields)?;
         let mut intent = json!({
             "path":resolved.path,
             "fields":fields,
@@ -4806,8 +4804,12 @@ impl Mux {
         }
         let active_at = self.next_active_at();
         let notifications = self.tree_decorations();
+        let column_added;
         let attached = {
             let mut state = self.state.lock().unwrap();
+            let (target, routed) =
+                app_rules::route_new_tab_pane(&mut state, target, || self.next_id())?;
+            column_added = routed;
             let delta = match state.panes.get_mut(&target) {
                 Some(pane) => {
                     pane.tabs.push(surface.id);
@@ -4856,6 +4858,9 @@ impl Mux {
             anyhow::bail!("pane disappeared while creating tab");
         };
         self.emit_tree_delta(delta, true);
+        if column_added {
+            self.emit(MuxEvent::TreeChanged);
+        }
         self.reap_if_dead(&surface);
         Ok(created)
     }

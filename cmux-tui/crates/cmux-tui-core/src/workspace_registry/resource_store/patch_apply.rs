@@ -14,9 +14,10 @@ pub(crate) fn apply_resource_patch(
     let patch = prune_unchanged_resource_changes(transaction, patch)?;
     // Closes by any path land in the closed history before their rows go.
     crate::state::closed_history_store::capture_closed(transaction, &patch)?;
-    apply_effective_resource_patch(transaction, &patch, revision)?;
     // `app-screens-v1`: the authoritative check, on the rows being committed.
-    crate::state::app_commit_rules::check_committed_patch(transaction, &patch)?;
+    let apps = crate::state::app_commit_rules::before_patch(transaction)?;
+    apply_effective_resource_patch(transaction, &patch, revision)?;
+    crate::state::app_commit_rules::check_committed_patch(transaction, &patch, apps)?;
     Ok(patch)
 }
 

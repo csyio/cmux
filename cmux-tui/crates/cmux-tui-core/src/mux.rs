@@ -15224,8 +15224,12 @@ impl Mux {
             self.spawn_browser_surface_with_resource_identity(url, size, None, resource_identity)?;
         let active_at = self.next_active_at();
         let notifications = self.tree_decorations();
+        let column_added;
         let attached = {
             let mut state = self.state.lock().unwrap();
+            let (target, routed) =
+                app_rules::route_new_tab_pane(&mut state, target, || self.next_id())?;
+            column_added = routed;
             match state.panes.get_mut(&target) {
                 Some(pane) => {
                     pane.tabs.push(surface.id);
@@ -15266,6 +15270,9 @@ impl Mux {
             anyhow::bail!("pane disappeared while creating browser tab");
         };
         self.emit_tree_delta(delta, true);
+        if column_added {
+            self.emit(MuxEvent::TreeChanged);
+        }
         self.reap_if_dead(&surface);
         Ok(surface)
     }
@@ -15291,7 +15298,7 @@ impl Mux {
         let pending_surface = self.pending_workspace_surface(surface.id);
         let notifications = self.tree_decorations();
         let active_at = self.next_active_at();
-        let mut column_added = false;
+        let column_added;
         let (delta, selection_resync) = {
             let mut state = self.state.lock().unwrap();
             let Some(wi) = state.workspace_index(workspace) else {

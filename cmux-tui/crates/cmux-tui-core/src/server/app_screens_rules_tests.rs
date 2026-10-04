@@ -35,7 +35,9 @@ fn commit_check_refuses_a_racing_op_that_skipped_the_pre_checks() {
         None,
         |state, registry| {
             let mut projected = state.clone();
-            projected.panes.get_mut(&source).unwrap().tabs.retain(|tab| *tab != moved);
+            let source_pane = projected.panes.get_mut(&source).unwrap();
+            source_pane.tabs.retain(|tab| *tab != moved);
+            source_pane.active_tab = 0;
             projected.panes.get_mut(&app_pane).unwrap().tabs.push(moved);
             let projection =
                 mux.resource_effect_projection_locked(registry, &mut projected, json!({}))?;
@@ -104,10 +106,18 @@ fn app_workspace_keeps_exactly_its_app_screen() {
         let (terminal_workspace, terminal_screen) = screen_of(terminal_pane);
         (app_screen, terminal_workspace, terminal_screen)
     });
-    let before = layout_fingerprint(&wire.tree());
+    // The app screen is its workspace's last screen: moving it out is
+    // refused before the app rules are asked.
     for request in [
         json!({"cmd": "move-screen", "screen": app_screen, "workspace": terminal_workspace}),
         json!({"cmd": "move-screen", "screen": app_screen, "new_workspace": true}),
+    ] {
+        let response = wire.send(request.clone());
+        assert_eq!(response["ok"], false, "{request}: {response}");
+    }
+    // A second screen, so the terminal workspace may give one away.
+    wire.ok(json!({"cmd": "new-screen", "workspace": terminal_workspace}));
+    for request in [
         json!({"cmd": "move-screen", "screen": terminal_screen, "workspace": app_workspace}),
         json!({"cmd": "new-screen", "workspace": app_workspace}),
     ] {
@@ -119,7 +129,6 @@ fn app_workspace_keeps_exactly_its_app_screen() {
         "screen-in-app-workspace",
         "app.screen_fixed",
     );
-    assert_eq!(layout_fingerprint(&wire.tree()), before);
     let app_screens = screens(&wire.tree())
         .into_iter()
         .filter(|screen| screen["resource_id"] == screen_id.as_str())
@@ -138,7 +147,10 @@ fn layout_undo_keeps_the_app_column() {
     let screen_id = created["value"]["screen_id"].as_str().unwrap().to_string();
     let (app, app_pane) = app_tab(&wire.screen(&screen_id));
     wire.ok(json!({"cmd": "new-pane-right", "pane": app_pane, "width": 0.5}));
-    wire.ok(json!({"cmd": "undo-layout", "pane": app_pane, "confirm_close": true}));
+    let preview = wire.ok(json!({"cmd": "undo-layout", "pane": app_pane}));
+    assert_eq!(preview["confirmation_required"], true, "{preview}");
+    wire.ok(json!({"cmd": "undo-layout", "pane": app_pane, "confirm_close": true,
+                   "revision": preview["revision"]}));
     let raw = wire.screen(&screen_id);
     assert_eq!(raw["kind"], "appColumn", "{raw}");
     assert_eq!(app_tab(&raw).0, app, "undo kept the lone app column");
@@ -150,11 +162,13 @@ fn layout_undo_keeps_the_app_column() {
         let (w, s) = state.screen_of(app_pane).unwrap();
         let entry = state.workspaces[w].screens[s].layout_undo.back_mut().unwrap();
         entry.before.layout_columns.clear();
-        entry.before.root = crate::Node::Leaf(ordinary);
+        entry.before.root = Node::Leaf(ordinary);
     }
     let before = layout_fingerprint(&wire.tree());
+    let preview = wire.ok(json!({"cmd": "undo-layout", "pane": app_pane}));
     wire.refused(
-        json!({"cmd": "undo-layout", "pane": app_pane, "confirm_close": true}),
+        json!({"cmd": "undo-layout", "pane": app_pane, "confirm_close": true,
+               "revision": preview["revision"]}),
         "app-column-locked",
     );
     assert_eq!(layout_fingerprint(&wire.tree()), before);
@@ -174,7 +188,8 @@ fn tab_create_app_honors_expected_revision() {
     let wire = Wire::new();
     let (_, pane) = wire.terminal_pane();
     let public_pane = wire.public_pane(pane);
-    let stale = json!({"pane": public_pane, "app": STORE, "expected_revision": "1"});
+    let ahead = wire.mux.with_state(|state| state.resource_revision) + 100;
+    let stale = json!({"pane": public_pane, "app": STORE, "expected_revision": ahead.to_string()});
     wire.v2_refused("tab.create_app", stale, "create-stale", "revision.conflict");
     let revision = wire.mux.with_state(|state| state.resource_revision);
     let current =

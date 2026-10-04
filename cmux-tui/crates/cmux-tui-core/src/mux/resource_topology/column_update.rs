@@ -114,7 +114,7 @@ impl Mux {
                     })
                     .ok_or_else(|| invalid("column", "not a viewport column of this screen"))?;
                 if let Some(sticky) = update.sticky {
-                    crate::state::app_rules::refuse_column(state, current.id, index, sticky)?;
+                    app_rules::refuse_column(state, current.id, index, sticky)?;
                 }
                 let snapshot = current.layout_snapshot();
                 let changed = reduce_column_update(&snapshot, index, &update)?;

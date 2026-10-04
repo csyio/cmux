@@ -274,31 +274,47 @@ pub(crate) fn focused_ordinary_pane(state: &State) -> Option<PaneId> {
 }
 
 /// The pane a workspace-level new tab goes to, and whether a column was
-/// made for it (decision 2026-10-04: a new tab sent to a home whose focused
-/// pane is the app column is never refused). The active pane, except when it
-/// is in the app column of an appColumn screen: then the first pane of the
-/// first ordinary column, or a new empty pane in a new ordinary column right
-/// of the app column, which the caller fills in the same lock.
+/// made for it: [`route_new_tab_pane`] of the workspace's active pane.
 pub(crate) fn new_tab_target(
     state: &mut State,
     workspace_index: usize,
-    mut next_id: impl FnMut() -> u64,
+    next_id: impl FnMut() -> u64,
 ) -> anyhow::Result<(Option<PaneId>, bool)> {
     let workspace = &state.workspaces[workspace_index];
-    let Some(screen) = workspace.active_screen_ref() else { return Ok((None, false)) };
-    let (screen_id, active, screen_index) =
-        (screen.id, screen.active_pane, workspace.active_screen);
+    let Some(active) = workspace.active_screen_ref().map(|screen| screen.active_pane) else {
+        return Ok((None, false));
+    };
+    let (pane, created) = route_new_tab_pane(state, active, next_id)?;
+    Ok((Some(pane), created))
+}
+
+/// Decision 2026-10-04: a new tab is never added to an app column. A new tab
+/// headed for `pane` (a workspace's or screen's focused pane; a creation that
+/// names an app column pane is refused before it gets here) goes to the
+/// first pane of the first ordinary column, or to a new empty pane in a new
+/// ordinary column right of the app column, which the caller fills in the
+/// same lock. Returns the pane and whether a column was made.
+pub(crate) fn route_new_tab_pane(
+    state: &mut State,
+    pane: PaneId,
+    mut next_id: impl FnMut() -> u64,
+) -> anyhow::Result<(PaneId, bool)> {
+    let Some((workspace_index, screen_index)) = state.screen_of(pane) else {
+        return Ok((pane, false));
+    };
+    let screen = &state.workspaces[workspace_index].screens[screen_index];
+    let screen_id = screen.id;
     if reducer_kind(state, screen_id) != ScreenKind::AppColumn
-        || !first_column_panes(screen).contains(&active)
+        || !first_column_panes(screen).contains(&pane)
     {
-        return Ok((Some(active), false));
+        return Ok((pane, false));
     }
     if let Some(column) = screen.layout_columns.get(1) {
-        return Ok((Some(column.root.first_visible_pane()), false));
+        return Ok((column.root.first_visible_pane(), false));
     }
-    let pane = next_id();
+    let created = next_id();
     state.insert_pane(crate::model::Pane {
-        id: pane,
+        id: created,
         public_id: crate::resource::PanePublicId::random()?,
         name: None,
         tabs: Vec::new(),
@@ -308,14 +324,14 @@ pub(crate) fn new_tab_target(
     });
     let (column, base) = (next_id(), next_id());
     let screen = &mut state.workspaces[workspace_index].screens[screen_index];
-    let column = crate::model::LayoutColumn::single(column, 0.5, pane);
+    let column = crate::model::LayoutColumn::single(column, 0.5, created);
     anyhow::ensure!(
-        screen.insert_layout_column_after(active, base, column),
+        screen.insert_layout_column_after(pane, base, column),
         "the app column disappeared while placing a new tab"
     );
-    state.resource_indexes.pane_screen.insert(pane, screen_id);
+    state.resource_indexes.pane_screen.insert(created, screen_id);
     crate::Mux::rebuild_split_screen_index(state);
-    Ok((Some(pane), true))
+    Ok((created, true))
 }
 
 /// A layout op of a staged plan, on `model`, the projection of `state`.

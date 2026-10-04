@@ -112,9 +112,9 @@ impl Mux {
             });
         }
         if let BatchCloseTarget::Pane(pane) = &request.target {
-            let place = crate::state::app_rules::AppPlace::Pane(*pane);
+            let place = app_rules::AppPlace::Pane(*pane);
             let action = cmux_layout_reducer::AppAction::ClosePane;
-            self.with_state(|state| crate::state::app_rules::refuse(state, place, action))?;
+            self.with_state(|state| app_rules::refuse(state, place, action))?;
         }
         let workspace = self.with_state(|state| match &request.target {
             BatchCloseTarget::Tabs(_) | BatchCloseTarget::TabGroup(_) => None,
@@ -277,12 +277,8 @@ impl Mux {
                 state.surfaces.contains_key(surface) && state.pane_of(*surface).is_some(),
                 "unknown surface {surface}"
             );
-            let place = crate::state::app_rules::AppPlace::Tab(*surface);
-            crate::state::app_rules::refuse(
-                state,
-                place,
-                cmux_layout_reducer::AppAction::CloseTab,
-            )?;
+            let place = app_rules::AppPlace::Tab(*surface);
+            app_rules::refuse(state, place, cmux_layout_reducer::AppAction::CloseTab)?;
         }
         let selection_before = active_tree_selection(state);
         let changed_screens = unique_screen_ids(

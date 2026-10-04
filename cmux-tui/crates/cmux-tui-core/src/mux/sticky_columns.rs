@@ -196,12 +196,12 @@ fn refuse_app_column(
     let Some((workspace, screen)) = state.screen_of(pane) else { return Ok(()) };
     let screen = &state.workspaces[workspace].screens[screen];
     let index = screen.layout_columns.iter().position(|column| column.root.contains(pane));
-    crate::state::app_rules::refuse_column(state, screen.id, index.unwrap_or(0), sticky).map_err(
-        |error| ColumnStickyError::AppRule {
+    app_rules::refuse_column(state, screen.id, index.unwrap_or(0), sticky).map_err(|error| {
+        ColumnStickyError::AppRule {
             code: crate::state::app_screens_store::raw_error_code(&error).unwrap_or_default(),
             message: error.to_string(),
-        },
-    )
+        }
+    })
 }
 
 impl Mux {

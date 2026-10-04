@@ -166,12 +166,19 @@ fn check_workspace(transaction: &Transaction<'_>, workspace: &str) -> anyhow::Re
     Err(AppRule::new(AppRefusal::ScreenFixed, named.0.clone()).into())
 }
 
-/// The check of one commit, after `patch` is applied in `transaction`.
-pub(crate) fn check_committed_patch(
+/// The app tabs of every live app screen before a commit, so the check can
+/// tell a closed app screen (its tabs closed with it) from one whose screen
+/// went away while its app tab moved on.
+pub(crate) struct AppScreensBefore {
+    screens: Vec<(String, AppRefusal, Vec<String>)>,
+}
+
+/// Read before `apply_resource_patch` writes; `None` when no app screen or
+/// app workspace exists (the check then costs nothing more).
+pub(crate) fn before_patch(
     transaction: &Transaction<'_>,
-    patch: &ResourcePatch,
-) -> anyhow::Result<()> {
-    // Registries opened by older builds or mid-migration may lack the table.
+) -> anyhow::Result<Option<AppScreensBefore>> {
+    // Registries opened by older builds or mid-migration may lack the tables.
     let ready = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table'
            AND name = 'app_workspaces')
@@ -188,8 +195,77 @@ pub(crate) fn check_committed_patch(
             |row| row.get::<_, bool>(0),
         )?
     {
-        return Ok(());
+        return Ok(None);
     }
+    let kinds = transaction
+        .prepare(
+            "SELECT k.screen_id, k.kind, k.app_id FROM resource_screen_kinds AS k
+             JOIN resource_screens AS s ON s.public_id = k.screen_id
+             WHERE s.deleted_revision IS NULL",
+        )?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut screens = Vec::with_capacity(kinds.len());
+    for (screen, kind, app) in kinds {
+        let tabs = transaction
+            .prepare(
+                "SELECT t.public_id FROM resource_tabs AS t
+                 JOIN resource_panes AS p ON p.public_id = t.pane_id
+                 JOIN app_tabs AS a ON a.browser_id = t.content_id
+                 WHERE p.screen_id = ?1 AND a.app_id = ?2
+                   AND t.deleted_revision IS NULL AND p.deleted_revision IS NULL",
+            )?
+            .query_map([&screen, &app], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let refusal =
+            if kind == "app" { AppRefusal::ScreenFixed } else { AppRefusal::ColumnLocked };
+        screens.push((screen, refusal, tabs));
+    }
+    Ok(Some(AppScreensBefore { screens }))
+}
+
+/// An app screen that went away took its app tab with it (a close), never
+/// left it live elsewhere (a move out).
+fn check_gone_screens(
+    transaction: &Transaction<'_>,
+    before: &AppScreensBefore,
+) -> anyhow::Result<()> {
+    for (screen, refusal, tabs) in &before.screens {
+        let live = one(
+            transaction,
+            "SELECT public_id FROM resource_screens
+             WHERE public_id = ?1 AND deleted_revision IS NULL",
+            screen,
+        )?;
+        if live.is_some() {
+            continue;
+        }
+        for tab in tabs {
+            let moved = one(
+                transaction,
+                "SELECT public_id FROM resource_tabs
+                 WHERE public_id = ?1 AND deleted_revision IS NULL",
+                tab,
+            )?;
+            if moved.is_some() {
+                return Err(AppRule::new(*refusal, screen.clone()).into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The check of one commit, after `patch` is applied in `transaction`;
+/// `before` is [`before_patch`] of the same transaction.
+pub(crate) fn check_committed_patch(
+    transaction: &Transaction<'_>,
+    patch: &ResourcePatch,
+    before: Option<AppScreensBefore>,
+) -> anyhow::Result<()> {
+    let Some(before) = before else { return Ok(()) };
+    check_gone_screens(transaction, &before)?;
     let (screens, workspaces) = touched(transaction, patch)?;
     for screen in &screens {
         check_screen(transaction, screen)?;
