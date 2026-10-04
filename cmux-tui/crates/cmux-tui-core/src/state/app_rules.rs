@@ -122,6 +122,10 @@ pub(crate) fn refuse_effect(
     fields: &Map<String, Value>,
 ) -> anyhow::Result<()> {
     use ResourceOperation as Op;
+    // `workspace.create {initial: app}` makes a new workspace.
+    if fields.get("new_workspace") == Some(&Value::Bool(true)) {
+        return Ok(());
+    }
     let action = match operation {
         Op::TabCreateTerminal | Op::TabCreateBrowser | Op::PaneRun => AppAction::AddTab,
         Op::PaneCreate => AppAction::Split,

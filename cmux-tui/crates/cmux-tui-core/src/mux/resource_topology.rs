@@ -4452,7 +4452,12 @@ impl Mux {
                 .map(|created| created.path)
             }
             ResourceOperation::TabCreateBrowser => {
-                let slots = self.effect_slots(&path)?;
+                let mut slots = self.effect_slots(&path)?;
+                // `workspace.create {initial: app}`: always a new workspace,
+                // named and maybe ephemeral (internal fields).
+                if fields.get("new_workspace") == Some(&Value::Bool(true)) {
+                    (slots.pane, slots.workspace) = (None, None);
+                }
                 let size = effect_browser_cell_size(self, fields)?;
                 let identity = self.effect_browser_reservation(intent)?;
                 let surface = match slots.pane {
@@ -4472,8 +4477,6 @@ impl Mux {
                     None => {
                         let (workspace_key, workspace_public_id, workspace_mutation) =
                             self.effect_workspace_reservation(intent)?;
-                        // `workspace.create {initial: app}` names the new
-                        // workspace and may mark it ephemeral (internal fields).
                         let placement = self.create_empty_workspace_for_resource_effect(
                             optional_owned_string(fields, "workspace_name")?,
                             Some(workspace_key),

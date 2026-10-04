@@ -303,23 +303,29 @@ pub(crate) fn note_companion_renames(
     transaction: &Transaction<'_>,
     patch: &crate::workspace_registry::ResourcePatch,
 ) -> anyhow::Result<()> {
-    let mut ready = None;
+    use crate::workspace_registry::ResourceChange;
+    if !patch.changes.iter().any(|change| matches!(change, ResourceChange::UpsertWorkspace { .. }))
+        || !table_exists(transaction, "app_tab_workspaces")?
+    {
+        return Ok(());
+    }
+    // The few companions that still have their default name.
+    let defaults = transaction
+        .prepare("SELECT workspace_id, default_name FROM app_tab_workspaces WHERE renamed = 0")?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<Result<HashMap<_, _>, _>>()?;
+    if defaults.is_empty() {
+        return Ok(());
+    }
     for change in &patch.changes {
-        let crate::workspace_registry::ResourceChange::UpsertWorkspace { workspace, .. } = change
-        else {
-            continue;
-        };
-        if ready.is_none() {
-            ready = Some(table_exists(transaction, "app_tab_workspaces")?);
+        let ResourceChange::UpsertWorkspace { workspace, .. } = change else { continue };
+        let id = workspace.public_id.as_str();
+        if defaults.get(id).is_some_and(|default| *default != workspace.name) {
+            transaction.execute(
+                "UPDATE app_tab_workspaces SET renamed = 1 WHERE workspace_id = ?1",
+                [id],
+            )?;
         }
-        if ready == Some(false) {
-            return Ok(());
-        }
-        transaction.execute(
-            "UPDATE app_tab_workspaces SET renamed = 1
-             WHERE workspace_id = ?1 AND renamed = 0 AND default_name != ?2",
-            params![workspace.public_id.as_str(), workspace.name],
-        )?;
     }
     Ok(())
 }

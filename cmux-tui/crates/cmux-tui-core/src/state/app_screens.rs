@@ -509,7 +509,7 @@ impl Mux {
         expected_revision: Option<u64>,
         mutation: &WorkspaceMutation,
     ) -> anyhow::Result<(SurfaceId, bool)> {
-        let mut fields = Map::new();
+        let mut fields = Map::from_iter([("new_workspace".to_string(), Value::Bool(true))]);
         if let Some(name) = name {
             Self::validate_workspace_name(&name)?;
             fields.insert("workspace_name".into(), Value::String(name));

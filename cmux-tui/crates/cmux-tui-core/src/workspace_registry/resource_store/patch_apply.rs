@@ -11,6 +11,8 @@ pub(crate) fn apply_resource_patch(
     patch: &ResourcePatch,
     revision: i64,
 ) -> anyhow::Result<ResourcePatch> {
+    // Before pruning: a legacy registry rewrite may have written the name.
+    crate::state::app_screens_store::note_companion_renames(transaction, patch)?;
     let patch = prune_unchanged_resource_changes(transaction, patch)?;
     // Closes by any path land in the closed history before their rows go.
     crate::state::closed_history_store::capture_closed(transaction, &patch)?;
@@ -54,6 +56,7 @@ pub(crate) fn apply_resource_patch_unrecorded(
     patch: &ResourcePatch,
     revision: i64,
 ) -> anyhow::Result<ResourcePatch> {
+    crate::state::app_screens_store::note_companion_renames(transaction, patch)?;
     let patch = prune_unchanged_resource_changes(transaction, patch)?;
     let apps = crate::state::app_commit_rules::before_patch(transaction)?;
     apply_effective_resource_patch(transaction, &patch, revision)?;

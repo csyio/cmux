@@ -246,7 +246,6 @@ pub(crate) fn check_committed_patch(
     patch: &ResourcePatch,
     before: Option<AppScreensBefore>,
 ) -> anyhow::Result<()> {
-    crate::state::app_screens_store::note_companion_renames(transaction, patch)?;
     let Some(before) = before else { return Ok(()) };
     check_gone_screens(transaction, &before)?;
     let (screens, workspaces) = touched(transaction, patch)?;
