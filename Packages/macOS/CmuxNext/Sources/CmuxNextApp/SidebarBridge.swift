@@ -21,6 +21,7 @@ final class SidebarBridge {
     private var profileObservation: Task<Void, Never>?
     /// Item presentation for sidebar sections (SidebarBridge+Sections).
     var sectionsObservation: Task<Void, Never>?
+    var cardsObservation: Task<Void, Never>?
     /// True once the sidebar shows real content: saved rows, the first
     /// live rows, or a settled empty or unavailable state, which marks the
     /// sidebar region ready for `LaunchReveal`.
@@ -63,6 +64,7 @@ final class SidebarBridge {
         services.launchReveal.hold(container, until: .sidebar)
         observe()
         observeSections()
+        observeCards()
     }
 
     func teardown() {
@@ -71,6 +73,7 @@ final class SidebarBridge {
         widthObservation?.cancel()
         profileObservation?.cancel()
         sectionsObservation?.cancel()
+        cardsObservation?.cancel()
     }
 
     private func observe() {
