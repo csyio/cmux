@@ -32,7 +32,6 @@ final class QuitCoordinator {
         // loop, and the save Task could never get the main queue.
         RunLoop.main.perform(inModes: [.common]) {
             SheetDismissal.endAll()
-        CmuxDialogCenter.shared.dismissAll()
             NSApp.terminate(nil)
         }
     }
