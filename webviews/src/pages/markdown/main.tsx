@@ -64,7 +64,7 @@ function editorHost(
     const base = config()?.libBase;
     return base ? `${base}${name}.js` : null;
   });
-  const imageURL = (src: string) => resolveImageURL(src, config()?.assetBase);
+  const imageURL = (src: string) => resolveImageURL(src, config()?.assetBase, config()?.remoteImageBase);
   return {
     openLink: follow,
     links: {
