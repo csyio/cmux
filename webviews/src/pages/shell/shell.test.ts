@@ -87,14 +87,18 @@ async function hostCall(op: string, params: unknown = {}): Promise<any> {
   const before = host.replies.length;
   client.receive({ t: "call", id, op, params });
   for (let i = 0; i < 20 && host.replies.length === before; i++) await Promise.resolve();
-  for (let i = 0; i < 20 && !host.replies.some((reply) => reply.id === id); i++) await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 20 && !host.replies.some((reply) => reply.id === id); i++)
+    await new Promise((r) => setTimeout(r, 0));
   return host.replies.find((reply) => reply.id === id);
 }
 
 beforeEach(async () => {
-  dom = new JSDOM("<!doctype html><html lang='en' data-cmux-page='shell'><head><title></title></head><body><main id='root'></main></body></html>", {
-    url: "https://shell.invalid/",
-  });
+  dom = new JSDOM(
+    "<!doctype html><html lang='en' data-cmux-page='shell'><head><title></title></head><body><main id='root'></main></body></html>",
+    {
+      url: "https://shell.invalid/",
+    },
+  );
   host = new FakeHost();
   idb = new FakeIDB();
   caches = new FakeCaches();
