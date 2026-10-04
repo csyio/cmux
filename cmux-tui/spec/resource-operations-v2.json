@@ -81,6 +81,32 @@
       },
       "extra": false
     },
+    "InitialApp": {
+      "kind": "object",
+      "fields": {
+        "app": {
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "name": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "description": "The app id from its manifest (publisher/name): ASCII letters, digits, ., _, - or /."
+        },
+        "route": {
+          "required": false,
+          "type": {
+            "kind": "primitive",
+            "name": "string",
+            "min_length": 1,
+            "max_length": 4096
+          },
+          "description": "A route inside the app, or a first-party page's small client state, without control characters."
+        }
+      },
+      "extra": false
+    },
     "EnsuredAppScreen": {
       "kind": "object",
       "fields": {
@@ -3103,6 +3129,10 @@
         {
           "kind": "ref",
           "name": "CreatedBrowserPath"
+        },
+        {
+          "kind": "ref",
+          "name": "CreatedAppPath"
         }
       ],
       "discriminator": "kind"
@@ -18230,9 +18260,18 @@
               "kind": "enum",
               "values": [
                 "terminal",
-                "empty"
+                "empty",
+                "app"
               ]
             }
+          },
+          "initial": {
+            "required": false,
+            "type": {
+              "kind": "ref",
+              "name": "InitialApp"
+            },
+            "description": "app-screens-v1: the app tab the workspace starts with. Required with initial_content app, refused otherwise."
           },
           "ephemeral": {
             "required": false,
@@ -18263,7 +18302,7 @@
         },
         "extra": false,
         "constraints": [
-          "initial_content is explicit. terminal returns CreatedTerminalPath; empty returns CreatedWorkspaceOnly."
+          "initial_content is explicit. terminal returns CreatedTerminalPath; empty returns CreatedWorkspaceOnly; app (app-screens-v1, with initial) returns CreatedAppPath. With app, one commit creates the workspace, its screen, its pane and its one app tab, so no client sees the workspace empty; a retry with the same idempotency key returns the same tab."
         ]
       },
       "result": {
@@ -18321,6 +18360,16 @@
               ]
             },
             "description": "The screen kind from the manifest presentation.screen; v1 has app only."
+          },
+          "display_name": {
+            "required": false,
+            "type": {
+              "kind": "primitive",
+              "name": "string",
+              "min_length": 1,
+              "max_length": 128
+            },
+            "description": "The app's English name from its manifest (for example Home or App Store). The daemon names the app's companion workspace \"<display_name> Tabs\" (else \"<app id> Tabs\"); clients localize it while extra.default_title is true."
           }
         },
         "extra": false,
@@ -18370,12 +18419,22 @@
               "max_length": 128
             },
             "description": "app-screens-v1: the Home app id. The home workspace becomes its app workspace."
+          },
+          "display_name": {
+            "required": false,
+            "type": {
+              "kind": "primitive",
+              "name": "string",
+              "min_length": 1,
+              "max_length": 128
+            },
+            "description": "The app's English name from its manifest (for example Home or App Store). The daemon names the app's companion workspace \"<display_name> Tabs\" (else \"<app id> Tabs\"); clients localize it while extra.default_title is true."
           }
         },
         "extra": false,
         "constraints": [
           "The hosting app sends it on every connect when the server advertises workspace-kind-v1. The store creates the one home workspace (extra.kind home) on the first call, places it first and ungrouped in the personal order, and replays it after that. The idempotency key does not select the home: every call names the same workspace. workspace.create never accepts kind.",
-          "With app (app-screens-v1) the home workspace becomes the app workspace of app: one app screen holding its app tab. Every screen it held before moves, with no tab lost, into its companion ordinary workspace, placed directly after it. A migrated home is left as it is."
+          "With app (app-screens-v1) the home workspace becomes the app workspace of app: one app screen holding its app tab. Every screen it held before moves, with no tab lost, into its companion workspace (an ordinary workspace of kind app_tabs, extra.app the app id, extra.default_title true until any rename), created holding them in one commit and placed directly after it. A migrated home is left as it is."
         ]
       },
       "result": {

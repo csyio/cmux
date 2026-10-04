@@ -1,5 +1,5 @@
 /* This file is generated. Do not edit by hand. */
-/* cmux-tui mux protocol 12, IR 081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd. */
+/* cmux-tui mux protocol 12, IR c7561f9965b022ecdd212ea0b7f60c556c13b5e7859b76b897c8f422204fa8fd. */
 
 
 /** JSON accepted by the wire codec. bigint is serialized as an exact JSON integer. */
@@ -387,6 +387,11 @@ export type IdentifyResult = {
 
 export type IdsResult = {
   "ids": Array<IdMapping>;
+};
+
+export type InitialApp = {
+  "app": string;
+  "route"?: (string) | null;
 };
 
 export type KittyGraphicsState = {
@@ -1152,11 +1157,17 @@ export type Workspace = {
 
 export type WorkspaceMutationResult = {
   "changed"?: boolean;
+  /** create-workspace with initial: the public browser id of the app tab. */
+  "content_resource_id"?: string;
   "generation": string;
   "index": bigint;
   "key": string;
   "registry_id": string;
   "replayed": boolean;
+  /** create-workspace with initial: the surface of the app tab. */
+  "surface"?: Id;
+  /** create-workspace with initial: the public id of the app tab. */
+  "tab_resource_id"?: string;
   "workspace": Id;
   "workspace_revision": bigint;
 };

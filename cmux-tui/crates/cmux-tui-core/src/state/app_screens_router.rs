@@ -39,7 +39,8 @@ pub(super) fn dispatch(mux: &Arc<Mux>, request: &ParsedResourceRequest) -> anyho
             // An `app-screens-v1` app makes the home workspace the app
             // workspace of its Home app (state/app_home.rs).
             if let Some(app) = string(request, "app") {
-                mux.state_migrate_home(&home.workspace_id, &app)?;
+                let display_name = string(request, "display_name");
+                mux.state_migrate_home(&home.workspace_id, &app, display_name.as_deref())?;
             }
             let revision = mux.with_state(|state| state.resource_revision);
             mutation_result(
@@ -52,7 +53,9 @@ pub(super) fn dispatch(mux: &Arc<Mux>, request: &ParsedResourceRequest) -> anyho
         }
         ResourceOperation::WorkspaceEnsureApp => {
             let kind = AppScreenKind::parse(&required(request, "kind")?)?;
-            let app = mux.state_ensure_app(&required(request, "app")?, kind)?;
+            let display_name = string(request, "display_name");
+            let app =
+                mux.state_ensure_app(&required(request, "app")?, kind, display_name.as_deref())?;
             mutation_result(
                 mux,
                 json!({"workspace_id": app.workspace_id, "screen_id": app.screen_id}),
@@ -79,6 +82,50 @@ pub(super) fn dispatch(mux: &Arc<Mux>, request: &ParsedResourceRequest) -> anyho
         }
         operation => anyhow::bail!("app screens router received {}", operation.wire_name()),
     }
+}
+
+/// `workspace.create {initial_content: "app", initial: {app, route?}}`: a
+/// new workspace whose only tab is an app tab, in one commit. `initial` is
+/// required with `app` and refused with any other initial content.
+pub(crate) fn create_app_workspace(
+    mux: &Arc<Mux>,
+    request: ParsedResourceRequest,
+) -> Result<Value, crate::resource::ResourceError> {
+    let invalid = |reason: &str| {
+        crate::resource::ResourceError::validation_invalid(Some("initial"), reason.to_string())
+    };
+    let initial = match (
+        request.fields.get("initial_content").and_then(Value::as_str),
+        request.fields.get("initial"),
+    ) {
+        (Some("app"), Some(Value::Object(initial))) => initial,
+        (Some("app"), _) => {
+            return Err(invalid("initial_content app requires initial {app, route?}"));
+        }
+        _ => return Err(invalid("initial is only allowed with initial_content app")),
+    };
+    let record = AppTabRecord {
+        app: initial.get("app").and_then(Value::as_str).unwrap_or_default().to_string(),
+        route: initial.get("route").and_then(Value::as_str).map(str::to_string),
+    };
+    let run = || -> anyhow::Result<Value> {
+        let mutation = mutation(&request)?;
+        let expected = crate::resource_router::expected_revision(&request.fields).map_err(typed)?;
+        let (surface, replayed) = mux.state_create_app_workspace(
+            string(&request, "name"),
+            None,
+            request.fields.get("ephemeral").and_then(Value::as_bool).unwrap_or(false),
+            record,
+            expected,
+            &mutation,
+        )?;
+        let value = mux
+            .with_state(|state| created_app_path(state, surface))
+            .context("the created app tab disappeared")?;
+        let revision = mux.with_state(|state| state.resource_revision);
+        mutation_result(mux, value, revision, replayed).map_err(typed)
+    };
+    run().map_err(crate::state::router::state_error)
 }
 
 /// The `CreatedAppPath` of a tab.

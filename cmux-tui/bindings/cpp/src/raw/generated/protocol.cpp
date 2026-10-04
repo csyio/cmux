@@ -2828,6 +2828,46 @@ Result<IdsResult> Codec<IdsResult>::decode(const Json& value) {
     return result;
 }
 
+Result<Json> Codec<InitialApp>::encode(const InitialApp& value) {
+    (void)value;
+    Json::Object object;
+    auto encoded_app = encode_value(value.app);
+    if (!encoded_app) return std::move(encoded_app).error();
+    object.emplace("app", std::move(encoded_app).value());
+    if (!value.route.is_absent()) {
+        auto encoded = encode_value(value.route);
+        if (!encoded) return std::move(encoded).error();
+        object.emplace("route", std::move(encoded).value());
+    }
+    return Json(std::move(object));
+}
+
+Result<InitialApp> Codec<InitialApp>::decode(const Json& value) {
+    auto source = value.as_object();
+    if (!source) return std::move(source).error();
+    InitialApp result{};
+    const Json* field_app = value.find("app");
+    if (!field_app) {
+        return make_error(ErrorCode::decode, "missing required field 'app'");
+    }
+    if (field_app) {
+        auto decoded = decode_value<std::string>(*field_app);
+        if (!decoded) return std::move(decoded).error();
+        result.app = std::move(decoded).value();
+    }
+    const Json* field_route = value.find("route");
+    if (field_route) {
+        if (field_route->is_null()) {
+            result.route = Field<std::string>::null();
+        } else {
+            auto decoded = decode_value<std::string>(*field_route);
+            if (!decoded) return std::move(decoded).error();
+            result.route = Field<std::string>(std::move(decoded).value());
+        }
+    }
+    return result;
+}
+
 Result<Json> Codec<JsonValue>::encode(const JsonValue& value) {
     return encode_value(value.value);
 }
@@ -10415,6 +10455,11 @@ Result<Json> Codec<WorkspaceMutationResult>::encode(const WorkspaceMutationResul
         if (!encoded) return std::move(encoded).error();
         object.emplace("changed", std::move(encoded).value());
     }
+    if (value.content_resource_id) {
+        auto encoded = encode_value(*value.content_resource_id);
+        if (!encoded) return std::move(encoded).error();
+        object.emplace("content_resource_id", std::move(encoded).value());
+    }
     auto encoded_generation = encode_value(value.generation);
     if (!encoded_generation) return std::move(encoded_generation).error();
     object.emplace("generation", std::move(encoded_generation).value());
@@ -10430,6 +10475,16 @@ Result<Json> Codec<WorkspaceMutationResult>::encode(const WorkspaceMutationResul
     auto encoded_replayed = encode_value(value.replayed);
     if (!encoded_replayed) return std::move(encoded_replayed).error();
     object.emplace("replayed", std::move(encoded_replayed).value());
+    if (value.surface) {
+        auto encoded = encode_value(*value.surface);
+        if (!encoded) return std::move(encoded).error();
+        object.emplace("surface", std::move(encoded).value());
+    }
+    if (value.tab_resource_id) {
+        auto encoded = encode_value(*value.tab_resource_id);
+        if (!encoded) return std::move(encoded).error();
+        object.emplace("tab_resource_id", std::move(encoded).value());
+    }
     auto encoded_workspace = encode_value(value.workspace);
     if (!encoded_workspace) return std::move(encoded_workspace).error();
     object.emplace("workspace", std::move(encoded_workspace).value());
@@ -10448,6 +10503,12 @@ Result<WorkspaceMutationResult> Codec<WorkspaceMutationResult>::decode(const Jso
         auto decoded = decode_value<bool>(*field_changed);
         if (!decoded) return std::move(decoded).error();
         result.changed = std::move(decoded).value();
+    }
+    const Json* field_content_resource_id = value.find("content_resource_id");
+    if (field_content_resource_id) {
+        auto decoded = decode_value<std::string>(*field_content_resource_id);
+        if (!decoded) return std::move(decoded).error();
+        result.content_resource_id = std::move(decoded).value();
     }
     const Json* field_generation = value.find("generation");
     if (!field_generation) {
@@ -10493,6 +10554,18 @@ Result<WorkspaceMutationResult> Codec<WorkspaceMutationResult>::decode(const Jso
         auto decoded = decode_value<bool>(*field_replayed);
         if (!decoded) return std::move(decoded).error();
         result.replayed = std::move(decoded).value();
+    }
+    const Json* field_surface = value.find("surface");
+    if (field_surface) {
+        auto decoded = decode_value<Id>(*field_surface);
+        if (!decoded) return std::move(decoded).error();
+        result.surface = std::move(decoded).value();
+    }
+    const Json* field_tab_resource_id = value.find("tab_resource_id");
+    if (field_tab_resource_id) {
+        auto decoded = decode_value<std::string>(*field_tab_resource_id);
+        if (!decoded) return std::move(decoded).error();
+        result.tab_resource_id = std::move(decoded).value();
     }
     const Json* field_workspace = value.find("workspace");
     if (!field_workspace) {
@@ -14260,6 +14333,11 @@ Result<Json> Codec<CreateWorkspaceRequest>::encode(const CreateWorkspaceRequest&
         if (!encoded) return std::move(encoded).error();
         object.emplace("expected_revision", std::move(encoded).value());
     }
+    if (!value.initial.is_absent()) {
+        auto encoded = encode_value(value.initial);
+        if (!encoded) return std::move(encoded).error();
+        object.emplace("initial", std::move(encoded).value());
+    }
     if (!value.key.is_absent()) {
         auto encoded = encode_value(value.key);
         if (!encoded) return std::move(encoded).error();
@@ -14308,6 +14386,16 @@ Result<CreateWorkspaceRequest> Codec<CreateWorkspaceRequest>::decode(const Json&
             auto decoded = decode_value<std::uint64_t>(*field_expected_revision);
             if (!decoded) return std::move(decoded).error();
             result.expected_revision = Field<std::uint64_t>(std::move(decoded).value());
+        }
+    }
+    const Json* field_initial = value.find("initial");
+    if (field_initial) {
+        if (field_initial->is_null()) {
+            result.initial = Field<InitialApp>::null();
+        } else {
+            auto decoded = decode_value<InitialApp>(*field_initial);
+            if (!decoded) return std::move(decoded).error();
+            result.initial = Field<InitialApp>(std::move(decoded).value());
         }
     }
     const Json* field_key = value.find("key");
@@ -29783,6 +29871,9 @@ constexpr std::array<CommandFieldRequirement, 4> kCommand47FieldRequirements{{
     {"shell_args", 12U, "terminal-shell-args-v1"},
     {"terminal_id", 9U, ""},
 }};
+constexpr std::array<CommandFieldRequirement, 1> kCommand48FieldRequirements{{
+    {"initial", 12U, "app-screens-v1"},
+}};
 constexpr std::array<CommandFieldRequirement, 1> kCommand57FieldRequirements{{
     {"view", 12U, "shared-sizing-v1"},
 }};
@@ -29947,7 +30038,7 @@ constexpr std::array<CommandMetadata, 214> kCommands{{
     {"create-surface-with-receipt", "control", 10U, "creation-receipts-v1", false, "", "", std::span<const CommandFieldRequirement>(kCommand45FieldRequirements)},
     {"create-tab-group", "control", 12U, "tab-groups-v1", false, "", "", std::span<const CommandFieldRequirement>{}},
     {"create-terminal", "control", 7U, "workspace-registry-v1", false, "", "", std::span<const CommandFieldRequirement>(kCommand47FieldRequirements)},
-    {"create-workspace", "control", 7U, "workspace-registry-v1", false, "", "", std::span<const CommandFieldRequirement>{}},
+    {"create-workspace", "control", 7U, "workspace-registry-v1", false, "", "", std::span<const CommandFieldRequirement>(kCommand48FieldRequirements)},
     {"create-workspace-group", "control", 12U, "workspace-groups-v1", false, "", "", std::span<const CommandFieldRequirement>{}},
     {"delete-bookmark", "control", 12U, "bookmarks-v1", false, "", "", std::span<const CommandFieldRequirement>{}},
     {"delete-browser-profile", "control", 12U, "browser-profiles-v1", false, "", "", std::span<const CommandFieldRequirement>{}},

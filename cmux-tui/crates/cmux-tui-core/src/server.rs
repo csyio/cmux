@@ -1509,6 +1509,9 @@ enum Command {
         /// generates a UUIDv4 key and returns it.
         #[serde(default)]
         key: Option<String>,
+        /// `app-screens-v1`: start with one app tab (server/app_screens_wire.rs).
+        #[serde(default)]
+        initial: Option<app_screens_wire::InitialApp>,
         #[serde(flatten)]
         mutation: MutationRequest,
     },
@@ -11317,6 +11320,7 @@ fn workspace_json(
         "pinned": presentation.is_some_and(|presentation| presentation.pinned),
         "marked_unread": presentation.is_some_and(|presentation| presentation.marked_unread),
         "kind": home::raw_workspace_kind(&notifications.presentation, &workspace.key),
+        "app": home::raw_workspace_app(&notifications.presentation, &workspace.key),
         "unread_count": workspace_unread_count(state, workspace, notifications),
         "active": index == state.active_workspace,
         "screens": workspace.screens.iter().enumerate().map(|(screen_index, screen)| {
@@ -13799,13 +13803,23 @@ fn handle_command_with_cancellation(
             let surface = mux.new_workspace(name, optional_surface_size(cols, rows))?;
             Ok(json!({ "surface": surface.id }))
         }
-        Command::CreateWorkspace { name, key, mutation } => {
+        Command::CreateWorkspace { name, key, initial, mutation } => {
             if let Some(key) = key.as_deref()
                 && !crate::workspace_registry::is_canonical_workspace_key(key)
             {
                 anyhow::bail!("workspace key must be a lowercase UUID");
             }
             let workspace_mutation = workspace_mutation(&mutation)?;
+            if let Some(initial) = initial {
+                return app_screens_wire::create_workspace(
+                    mux,
+                    name,
+                    key,
+                    initial,
+                    &mutation,
+                    &workspace_mutation,
+                );
+            }
             let placement = mux.create_empty_workspace_with_mutation(
                 name,
                 key,

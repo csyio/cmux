@@ -4069,7 +4069,7 @@ impl Mux {
         {
             Self::validate_workspace_name(name)?;
         }
-        if operation == ResourceOperation::WorkspaceCreate
+        if topology_effect_may_create_workspace(operation)
             && let Some(key) = fields.get("workspace_key").and_then(Value::as_str)
         {
             anyhow::ensure!(
@@ -4472,12 +4472,15 @@ impl Mux {
                     None => {
                         let (workspace_key, workspace_public_id, workspace_mutation) =
                             self.effect_workspace_reservation(intent)?;
+                        // `workspace.create {initial: app}` names the new
+                        // workspace and may mark it ephemeral (internal fields).
                         let placement = self.create_empty_workspace_for_resource_effect(
-                            None,
+                            optional_owned_string(fields, "workspace_name")?,
                             Some(workspace_key),
                             workspace_public_id,
                             &workspace_mutation,
-                            false,
+                            fields.get("workspace_ephemeral").and_then(Value::as_bool)
+                                == Some(true),
                         )?;
                         self.create_browser_surface_in_workspace(
                             placement.workspace,

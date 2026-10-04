@@ -90,7 +90,7 @@ pub(crate) fn handles(operation: ResourceOperation) -> bool {
 
 /// Map a state failure to its typed protocol error. Registry validation
 /// failures are `bad request: ...`.
-fn state_error(error: anyhow::Error) -> ResourceError {
+pub(crate) fn state_error(error: anyhow::Error) -> ResourceError {
     if error.downcast_ref::<ResourceError>().is_none()
         && let Some(reason) = error.to_string().strip_prefix("bad request: ")
     {

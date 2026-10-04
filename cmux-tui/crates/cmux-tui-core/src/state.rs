@@ -13,7 +13,7 @@
 pub(crate) mod app_commit_rules;
 pub(crate) mod app_rules;
 pub(crate) mod app_screens;
-mod app_screens_router;
+pub(crate) mod app_screens_router;
 pub(crate) mod app_screens_store;
 pub(crate) mod closed_history;
 pub(crate) mod closed_history_query;

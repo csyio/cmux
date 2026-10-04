@@ -357,8 +357,8 @@
     },
     {
       "path": "Commands.java",
-      "sha256": "3d315f431aaf5bb9db1a8c16ef66c0b89d5b6ae2e357d52132c6ea005f1be003",
-      "size": 56506
+      "sha256": "70c34eebb3bda8e4a3edbcd35f6385f94422efb1179fc73ade111ccc6e716bbb",
+      "size": 56583
     },
     {
       "path": "ConfigReloadRequestedEvent.java",
@@ -582,8 +582,8 @@
     },
     {
       "path": "CreateWorkspaceRequest.java",
-      "sha256": "47d11d6e3dea7da0b281b3147704be392f4041c3af311e323c8327dece14fc8e",
-      "size": 5638
+      "sha256": "fa7e95eac8a6488e07eb028b633a27703a0558c2b7ee1c530f921b609aff728d",
+      "size": 6282
     },
     {
       "path": "CursorStyle.java",
@@ -889,6 +889,11 @@
       "path": "ImportSessionOrganizationRequest.java",
       "sha256": "350e4678edb80ad8e64676b724dbaff962672b10c3f066b67f023d107359689f",
       "size": 3703
+    },
+    {
+      "path": "InitialApp.java",
+      "sha256": "1f87d99e3b53f81e65e63a7de1afe2eca0ca18f85bc01f3023d9efe0b4734f86",
+      "size": 2402
     },
     {
       "path": "JournalFrontendEventRequest.java",
@@ -1367,7 +1372,7 @@
     },
     {
       "path": "Protocol.java",
-      "sha256": "2d8d16edc7a8270a6f806a5a846cbc4f1fcc68cb7b5a0d6ceba3a29d6685751a",
+      "sha256": "edbf28e9422032a0794984349f2c3cbd7330cba18d3fb3ea1df097c151a4cc5a",
       "size": 4943
     },
     {
@@ -2422,8 +2427,8 @@
     },
     {
       "path": "WorkspaceMutationResult.java",
-      "sha256": "d2c2eb4399ad9e6faca6a6da675e3c9252f9f375734a230992f3dcb1bcfa1a51",
-      "size": 7127
+      "sha256": "0544551ce5a8eb1df2da3c91e59f340d10f134b4b4352e7dc03e22e28dcaab7c",
+      "size": 9522
     },
     {
       "path": "WorkspaceRenamedEvent.java",
@@ -2447,7 +2452,7 @@
     }
   ],
   "format": 1,
-  "ir_sha256": "081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd",
+  "ir_sha256": "c7561f9965b022ecdd212ea0b7f60c556c13b5e7859b76b897c8f422204fa8fd",
   "language": "java",
   "mux_protocol": 12,
   "schema_version": 2

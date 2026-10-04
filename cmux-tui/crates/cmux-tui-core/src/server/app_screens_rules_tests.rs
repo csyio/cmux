@@ -270,10 +270,11 @@ fn layout_undo_leaves_the_app_screen_as_it_is() {
 }
 
 /// The companion workspace of `app_workspace` (public id), from the store.
-fn companion_of(wire: &Wire, app_workspace: &str) -> Option<String> {
+/// The live companion (kind `app_tabs`) of `app`.
+fn companion_of(wire: &Wire, app: &str) -> Option<String> {
     wire.mux
         .read_registry_state(|connection| {
-            crate::state::app_screens_store::live_companion(connection, app_workspace)
+            crate::state::app_screens_store::live_companion(connection, app)
         })
         .unwrap()
 }
@@ -293,11 +294,11 @@ fn new_tabs_sent_to_an_app_workspace_go_to_its_companion() {
         workspace.screens[0].public_id.to_string()
     });
     let (app, app_pane) = app_tab(&wire.screen(&screen));
-    assert!(companion_of(&wire, &home_id).is_none());
+    assert!(companion_of(&wire, HOME).is_none());
     let conversation = wire.ok(json!({"cmd": "new-conversation-tab", "workspace": home_slot,
                                      "conversation": "conv_01X", "owner": "local",
                                      "origin": "route-test", "mutation_id": "r0"}));
-    let companion = companion_of(&wire, &home_id).expect("the companion was created");
+    let companion = companion_of(&wire, HOME).expect("the companion was created");
     let workspace_of = |wire: &Wire, surface: SurfaceId| {
         wire.mux.with_state(|state| {
             let (w, _) = state.screen_of(state.pane_of(surface).unwrap()).unwrap();
@@ -314,7 +315,20 @@ fn new_tabs_sent_to_an_app_workspace_go_to_its_companion() {
     let app_tab_created =
         wire.ok(json!({"cmd": "new-app-tab", "workspace": home_slot, "app": STORE}));
     assert_eq!(workspace_of(&wire, app_tab_created["surface"].as_u64().unwrap()), companion);
-    assert_eq!(companion_of(&wire, &home_id), Some(companion.clone()), "one companion");
+    assert_eq!(companion_of(&wire, HOME), Some(companion.clone()), "one companion");
+    // A rename by the user is final, and the marker (not the name) finds
+    // the companion.
+    wire.v2_ok("workspace.rename", json!({"workspace": companion, "name": "Mine"}), Some("rename"));
+    let again = wire.ok(json!({"cmd": "new-app-tab", "workspace": home_slot, "app": STORE}));
+    assert_eq!(workspace_of(&wire, again["surface"].as_u64().unwrap()), companion);
+    let raw = wire.tree()["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["resource_id"] == companion.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!((raw["name"].as_str(), raw["kind"].as_str()), (Some("Mine"), Some("app_tabs")));
     let order = wire.v2_ok("workspace.placement.list", json!({}), None);
     assert_eq!(order[1]["workspace"]["workspace_id"], companion.as_str(), "{order}");
     // The app screen is unchanged; a pane target inside it is refused.
@@ -351,7 +365,7 @@ fn home_migration_resumes_after_an_interrupted_step() {
     let raw = wire.screen(&screen);
     assert_eq!(raw["kind"], "app", "{raw}");
     assert_eq!(app_tab(&raw).0, app, "the interrupted app tab is reused");
-    assert!(companion_of(&wire, &home_id).is_none(), "nothing needed a companion");
+    assert!(companion_of(&wire, HOME).is_none(), "nothing needed a companion");
     wire.mux.shutdown();
 }
 
@@ -422,5 +436,158 @@ fn ordinary_workspace_with_only_an_app_tab_survives_a_restart() {
     assert_eq!(tabs[0]["kind"], "app");
     assert_eq!(tabs[0]["app"], "cmux.agent");
     assert_eq!(tabs[0]["route"].as_str().map(str::len), Some(4096));
+    wire.mux.shutdown();
+}
+
+/// R91: `workspace.create {initial_content: "app", initial}` (and raw
+/// `create-workspace {initial}`) makes a workspace whose only tab is an app
+/// tab in ONE commit and one event batch, so no client sees it empty; a
+/// retry replays it and it survives a restart.
+#[test]
+fn workspace_create_with_an_initial_app_tab_is_one_commit() {
+    let store = Store::new("initial-app");
+    let mut wire = store.open();
+    let before = wire.mux.with_state(|state| state.resource_revision);
+    let params = json!({"name": "New Tab", "initial_content": "app",
+                        "initial": {"app": "cmux.agent", "route": "r1"}});
+    let created = wire.v2_ok("workspace.create", params.clone(), Some("new-tab-1"));
+    assert_eq!(created["value"]["kind"], "app", "{created}");
+    let workspace = created["value"]["workspace_id"].as_str().unwrap().to_string();
+    let tab_id = created["value"]["tab_id"].as_str().unwrap().to_string();
+    let batches = wire.mux.resource_events_after(before).unwrap().batches;
+    assert_eq!(batches.len(), 1, "the creation committed more than once");
+    let changes = batches[0].changes.as_array().unwrap();
+    for (resource, id) in [("workspace", workspace.as_str()), ("tab", tab_id.as_str())] {
+        assert!(
+            changes.iter().any(|change| change["resource"] == resource && change["id"] == id),
+            "the batch lacks the {resource}: {changes:?}"
+        );
+    }
+    let again = wire.v2_ok("workspace.create", params, Some("new-tab-1"));
+    assert_eq!(
+        (again["replayed"].as_bool(), again["value"]["tab_id"].as_str()),
+        (Some(true), Some(tab_id.as_str()))
+    );
+    wire.v2_refused(
+        "workspace.create",
+        json!({"initial_content": "empty", "initial": {"app": "cmux.agent"}}),
+        "initial-empty",
+        "validation.invalid",
+    );
+    wire.v2_refused(
+        "workspace.create",
+        json!({"initial_content": "app"}),
+        "app-bare",
+        "validation.invalid",
+    );
+    let raw = wire.ok(json!({"cmd": "create-workspace", "name": "Raw",
+                             "initial": {"app": "cmux.agent", "route": "r2"}}));
+    let raw_key = raw["key"].as_str().unwrap().to_string();
+    assert!(raw["surface"].as_u64().is_some(), "{raw}");
+    let only_tab = |tree: &Value, matches: &dyn Fn(&Value) -> bool| {
+        let workspaces = tree["workspaces"].as_array().unwrap();
+        let workspace = workspaces.iter().find(|item| matches(item)).cloned().unwrap();
+        let tabs =
+            workspace["screens"].as_array().unwrap().iter().flat_map(tabs).collect::<Vec<_>>();
+        assert_eq!(tabs.len(), 1, "{workspace}");
+        (workspace["kind"].clone(), tabs[0].clone())
+    };
+    let (_, raw_tab) = only_tab(&wire.tree(), &|item| item["key"] == raw_key.as_str());
+    assert_eq!((raw_tab["kind"].as_str(), raw_tab["route"].as_str()), (Some("app"), Some("r2")));
+    wire.mux.shutdown();
+    drop(wire);
+
+    let mut wire = store.open();
+    let (kind, tab) = only_tab(&wire.tree(), &|item| item["resource_id"] == workspace.as_str());
+    assert_eq!(kind, "normal");
+    assert_eq!(tab["tab_resource_id"], tab_id.as_str());
+    assert_eq!((tab["kind"].as_str(), tab["route"].as_str()), (Some("app"), Some("r1")));
+    wire.mux.shutdown();
+}
+
+/// `workspace.ensure_app` never shows its workspace empty: the commit that
+/// creates the workspace also creates its app tab.
+#[test]
+fn ensure_app_creates_its_workspace_with_the_app_tab() {
+    let wire = Wire::new();
+    let before = wire.mux.with_state(|state| state.resource_revision);
+    let created = wire.ensure_app(STORE, "app", "open-store");
+    let workspace = created["value"]["workspace_id"].as_str().unwrap().to_string();
+    let batches = wire.mux.resource_events_after(before).unwrap().batches;
+    let first = batches
+        .iter()
+        .find(|batch| {
+            batch.changes.as_array().unwrap().iter().any(|change| {
+                change["resource"] == "workspace" && change["id"] == workspace.as_str()
+            })
+        })
+        .expect("a batch creates the workspace");
+    let changes = first.changes.as_array().unwrap();
+    assert!(
+        changes.iter().any(|change| change["resource"] == "tab" && change["kind"] == "upsert"),
+        "the app workspace appeared without its tab: {changes:?}"
+    );
+    wire.mux.shutdown();
+}
+
+/// The companion's name contract: the daemon names it "<display_name>
+/// Tabs" (the client-sent English app name, else the app id) and reports
+/// `extra.default_title: true` until any rename, which turns it false for
+/// good (also after a restart and after renaming back).
+#[test]
+fn companion_default_title_turns_false_on_rename_for_good() {
+    let store = Store::new("companion-title");
+    let mut wire = store.open();
+    let home = wire.v2_ok("workspace.ensure_home", json!({}), Some("connect-1"));
+    let home_slot = wire.workspace_slot(home["value"]["workspace_id"].as_str().unwrap());
+    wire.ok(json!({"cmd": "new-conversation-tab", "workspace": home_slot,
+                   "conversation": "conv_01T", "owner": "local",
+                   "origin": "title-test", "mutation_id": "t0"}));
+    let migrate = json!({"app": HOME, "display_name": "Home"});
+    wire.v2_ok("workspace.ensure_home", migrate, Some("connect-2"));
+    let companion = companion_of(&wire, HOME).expect("the migration made the companion");
+    let extra = |wire: &Wire| {
+        let snapshot = wire.snapshot();
+        let workspaces = snapshot["workspaces"].as_array().unwrap();
+        workspaces.iter().find(|item| item["id"] == companion.as_str()).cloned().unwrap()
+    };
+    let created = extra(&wire);
+    assert_eq!(created["name"], "Home Tabs", "{created}");
+    assert_eq!(created["extra"]["kind"], "app_tabs", "{created}");
+    assert_eq!(created["extra"]["default_title"], true, "{created}");
+    wire.v2_ok("workspace.rename", json!({"workspace": companion, "name": "Mine"}), Some("r1"));
+    assert_eq!(extra(&wire)["extra"]["default_title"], false);
+    wire.v2_ok(
+        "workspace.rename",
+        json!({"workspace": companion, "name": "Home Tabs"}),
+        Some("r2"),
+    );
+    assert_eq!(extra(&wire)["extra"]["default_title"], false, "renaming back keeps it false");
+
+    // An app with a recorded display name names its companion after it.
+    let store_app = wire.v2_ok(
+        "workspace.ensure_app",
+        json!({"app": STORE, "kind": "app", "display_name": "App Store"}),
+        Some("open-store"),
+    );
+    let store_slot = wire.workspace_slot(store_app["value"]["workspace_id"].as_str().unwrap());
+    wire.ok(json!({"cmd": "new-app-tab", "workspace": store_slot, "app": "cmux.agent"}));
+    let store_companion = companion_of(&wire, STORE).expect("a new tab made the companion");
+    let raw = wire.tree()["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["resource_id"] == store_companion.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(raw["name"], "App Store Tabs", "{raw}");
+    assert_eq!((raw["kind"].as_str(), raw["app"].as_str()), (Some("app_tabs"), Some(STORE)));
+    wire.mux.shutdown();
+    drop(wire);
+
+    let wire = store.open();
+    let restarted = extra(&wire);
+    assert_eq!(restarted["extra"]["kind"], "app_tabs", "{restarted}");
+    assert_eq!(restarted["extra"]["default_title"], false, "{restarted}");
     wire.mux.shutdown();
 }

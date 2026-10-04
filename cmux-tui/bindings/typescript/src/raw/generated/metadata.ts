@@ -1,10 +1,10 @@
 /* This file is generated. Do not edit by hand. */
-/* cmux-tui mux protocol 12, IR 081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd. */
+/* cmux-tui mux protocol 12, IR c7561f9965b022ecdd212ea0b7f60c556c13b5e7859b76b897c8f422204fa8fd. */
 
 
 export const SDK_SCHEMA_VERSION = 2 as const;
 export const MUX_PROTOCOL_VERSION = 12 as const;
-export const SDK_IR_SHA256 = "081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd" as const;
+export const SDK_IR_SHA256 = "c7561f9965b022ecdd212ea0b7f60c556c13b5e7859b76b897c8f422204fa8fd" as const;
 export const PROTOCOL = {
   "id_type": "uint64",
   "javascript_id_policy": "All protocol identifiers are uint64 JSON numbers. JavaScript and TypeScript SDKs must decode them losslessly as bigint (or validated decimal strings at their public boundary), and must not expose IEEE-754 number ids. Pairing request ids, revisions, timestamps, frame sequences, and reservation ids follow the same rule.",
@@ -665,7 +665,12 @@ export const COMMAND_METADATA = {
     "authority": "control",
     "since": 7,
     "capability": "workspace-registry-v1",
-    "fields": {},
+    "fields": {
+      "initial": {
+        "since": 12,
+        "capability": "app-screens-v1"
+      }
+    },
     "stream": null,
     "constraints": []
   },
@@ -5242,6 +5247,29 @@ export const TYPE_SCHEMAS: Readonly<Record<string, TypeSchema>> = {
             "name": "IdMapping"
           },
           "kind": "array"
+        }
+      }
+    },
+    "kind": "object"
+  },
+  "InitialApp": {
+    "additional_properties": false,
+    "fields": {
+      "app": {
+        "nullable": false,
+        "presence": "required",
+        "type": {
+          "kind": "scalar",
+          "name": "string"
+        }
+      },
+      "route": {
+        "default": null,
+        "nullable": true,
+        "presence": "optional",
+        "type": {
+          "kind": "scalar",
+          "name": "string"
         }
       }
     },
@@ -10131,6 +10159,17 @@ export const TYPE_SCHEMAS: Readonly<Record<string, TypeSchema>> = {
           "name": "boolean"
         }
       },
+      "content_resource_id": {
+        "capability": "app-screens-v1",
+        "description": "create-workspace with initial: the public browser id of the app tab.",
+        "nullable": false,
+        "presence": "optional",
+        "since": 12,
+        "type": {
+          "kind": "scalar",
+          "name": "string"
+        }
+      },
       "generation": {
         "nullable": false,
         "presence": "required",
@@ -10169,6 +10208,28 @@ export const TYPE_SCHEMAS: Readonly<Record<string, TypeSchema>> = {
         "type": {
           "kind": "scalar",
           "name": "boolean"
+        }
+      },
+      "surface": {
+        "capability": "app-screens-v1",
+        "description": "create-workspace with initial: the surface of the app tab.",
+        "nullable": false,
+        "presence": "optional",
+        "since": 12,
+        "type": {
+          "kind": "ref",
+          "name": "Id"
+        }
+      },
+      "tab_resource_id": {
+        "capability": "app-screens-v1",
+        "description": "create-workspace with initial: the public id of the app tab.",
+        "nullable": false,
+        "presence": "optional",
+        "since": 12,
+        "type": {
+          "kind": "scalar",
+          "name": "string"
         }
       },
       "workspace": {
@@ -12812,7 +12873,8 @@ export const COMMAND_SCHEMAS: Readonly<Record<string, CommandSchema>> = {
       "additional_properties": false,
       "constraints": [
         "origin and mutation_id are either both present or both absent.",
-        "At most 4096 live workspaces may exist; tombstoned keys cannot be reused."
+        "At most 4096 live workspaces may exist; tombstoned keys cannot be reused.",
+        "initial (app-screens-v1): the workspace starts with one app tab (app is a manifest app id, route has no control characters, at most 4096 bytes), created in the same commit, and the result adds surface, tab_resource_id and content_resource_id. expected_generation is refused with initial."
       ],
       "fields": {
         "expected_generation": {
@@ -12834,6 +12896,17 @@ export const COMMAND_SCHEMAS: Readonly<Record<string, CommandSchema>> = {
           "type": {
             "kind": "scalar",
             "name": "uint64"
+          }
+        },
+        "initial": {
+          "capability": "app-screens-v1",
+          "default": null,
+          "nullable": true,
+          "presence": "optional",
+          "since": 12,
+          "type": {
+            "kind": "ref",
+            "name": "InitialApp"
           }
         },
         "key": {

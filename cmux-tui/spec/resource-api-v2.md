@@ -81,7 +81,7 @@ lowercase hexadecimal digits. Older records keep the IDs they already have
 | --- | --- | --- |
 | Workspace identity (title, color, icon), `ephemeral` | shared | `workspace.update`, `workspace.create` |
 | Home workspace (`workspace-kind-v1`, one per store, created by the store) | shared | `workspace.ensure_home` |
-| App workspaces and screen kinds (`app-screens-v1`, one workspace per app), app tabs | shared | `workspace.ensure_app`, `workspace.ensure_home {screen, app}`, `tab.create_app` |
+| App workspaces and screen kinds (`app-screens-v1`, one workspace per app), app tabs | shared | `workspace.ensure_app`, `workspace.ensure_home {app}`, `tab.create_app`, `workspace.create {initial}` |
 | Tab pin, zoom, browser back/forward, browser owner | shared | `tab.pin`, `tab.unpin`, `tab.update` |
 | Tab groups | shared | `tab_group.*` |
 | Screen pin, color, icon, order; screen groups | shared | `screen.update`, `screen.move`, `screen_group.*` |
@@ -138,9 +138,17 @@ exactly one app screen with one app tab; there is one per app per store.
 `workspace.ensure_app {app, kind: "app"}` makes it once and replays it after
 that; its result value is `{workspace_id, screen_id}`. `workspace.ensure_home
 {app}` makes the home workspace the app workspace of the Home app; screens it
-held before move, with no tab lost, into its companion ordinary workspace,
-placed directly after it. Snapshots and upserts carry `extra.kind` (`app`)
-and `extra.app` on an app workspace and an app screen, and `content_kind:
+held before move, with no tab lost, into its companion workspace, created
+holding them in one commit and placed directly after it. The companion is an
+ordinary workspace of kind `app_tabs` (one per app, `extra.app` its app).
+The daemon names it "<display_name> Tabs", from the optional `display_name`
+(the manifest's English app name) on `workspace.ensure_app` or
+`workspace.ensure_home`, else "<app id> Tabs", and reports
+`extra.default_title: true` while that name stands: clients show their own
+localized title then. Any rename turns it false for good.
+Snapshots and upserts carry `extra.kind` (`app`, or `home` for the home
+workspace) and `extra.app` on an app workspace and an app screen, `extra.kind:
+"app_tabs"` and `extra.app` on a companion, and `content_kind:
 "app"` with `extra.app` and `extra.route` on an app tab. `tab.create_app {app,
 route?, expected_revision?}` places an app tab like `tab.create_browser`; in an
 ordinary screen it is an ordinary tab. An app screen refuses every operation
@@ -637,7 +645,10 @@ through 1.0 to create the terminal as a separate scrolling viewport column;
 ordinary splits omit it. `screen.create` returns the complete created terminal
 path.
 
-`workspace.create` requires `initial_content: terminal|empty`.
+`workspace.create` requires `initial_content: terminal|empty|app`. With
+`app` (`app-screens-v1`) it also requires `initial: {app, route?}`, refused
+with any other initial content: one commit creates the workspace with exactly
+one app tab and returns `CreatedAppPath`.
 `workspace.run` and `pane.run` accept exactly one of a nonempty `argv`
 array or a `shell` script. Only `argv[0]` must be nonempty; later values,
 including empty strings, preserve exact bytes. The server runs `shell` with

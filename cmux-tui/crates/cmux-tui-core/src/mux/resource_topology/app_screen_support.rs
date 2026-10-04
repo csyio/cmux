@@ -15,10 +15,11 @@ impl Mux {
 }
 
 impl Mux {
-    /// A new tab sent to an app workspace (a workspace, screen or session
-    /// target, not a pane) goes to its companion ordinary workspace, made
-    /// when missing. Other creations keep their selectors; a pane inside an
-    /// app screen is refused by the effect's app rules.
+    /// A new tab sent to an app workspace (a workspace or screen target,
+    /// not a pane) goes to its companion ordinary workspace, made when
+    /// missing. A session target makes a new workspace and keeps its
+    /// selectors; a pane inside an app screen is refused by the effect's
+    /// app rules.
     pub(crate) fn route_new_tab_to_companion(
         self: &Arc<Self>,
         operation: ResourceOperation,
@@ -28,20 +29,18 @@ impl Mux {
             operation,
             ResourceOperation::TabCreateTerminal | ResourceOperation::TabCreateBrowser
         ) || selectors.pane.is_some()
+            || (selectors.screen.is_none() && selectors.workspace.is_none())
         {
             return Ok(selectors);
         }
         let target = if selectors.screen.is_some() {
             ResourceTarget::Screen
-        } else if selectors.workspace.is_some() {
-            ResourceTarget::Workspace
         } else {
-            ResourceTarget::Session
+            ResourceTarget::Workspace
         };
         let Ok(path) = self.resolve_resource_path(target, &selectors) else { return Ok(selectors) };
-        let workspace = self.with_state(|state| match &path.workspace {
-            Some(id) => state.resource_indexes.workspaces.get(id).copied(),
-            None => state.workspaces.get(state.active_workspace).map(|workspace| workspace.id),
+        let workspace = path.workspace.as_ref().and_then(|id| {
+            self.with_state(|state| state.resource_indexes.workspaces.get(id).copied())
         });
         let Some(workspace) = workspace else { return Ok(selectors) };
         Ok(match self.new_tab_workspace(workspace)? {

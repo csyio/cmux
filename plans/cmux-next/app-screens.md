@@ -54,8 +54,15 @@ Invariants (reducer and daemon, with tests):
   app screen. Allowed: its width, and closing the workspace.
 - A new tab sent to an app workspace without a pane (a workspace or screen target, including
   `new-conversation-tab {workspace: home}`) is not refused: it goes to the app workspace's
-  companion workspace, an ordinary workspace placed directly after it, created when missing
-  (name `"<app workspace name> Tabs"`).
+  companion workspace, an ordinary workspace of kind `app_tabs` (one per app) placed directly
+  after it, created when missing. Its default name is `"<display_name> Tabs"` (the optional
+  `display_name` on `workspace.ensure_app`/`workspace.ensure_home`, the manifest's English
+  name; else the app id). It reads back as `extra.kind: "app_tabs"`, `extra.app` (raw
+  `Workspace.kind`/`Workspace.app`) and `extra.default_title: true` until any rename, which
+  turns it false for good. The marker, never the name, finds the companion.
+- `workspace.create {initial_content: "app", initial: {app, route?}}` and raw `create-workspace
+  {initial}` make an ordinary workspace whose only tab is an app tab in one commit (the
+  session-target `tab.create_browser` path), so no client sees it empty.
 - The v2 state ops map to the same checks in the one shared validator (state/app_rules.rs), so the
   raw and v2 paths refuse alike. The layout reducer has `Reject::AppScreenFixed`. The commit check
   (state/app_commit_rules.rs) is authoritative on the committed rows.
@@ -65,7 +72,7 @@ Invariants (reducer and daemon, with tests):
 - Storage: `resource_screen_kinds(screen_id, kind, app_id)` (kind is always `app`), a side table
   older builds ignore (deleted on tombstone, overlaid and shape-checked at load, rows that lost
   their shape deleted in one transaction). The app tab is `app_tabs` next to its frontend browser
-  row; app workspaces are `app_workspaces`; companions are `app_companion_workspaces`. A closed
+  row; app workspaces are `app_workspaces`; companions are `app_tab_workspaces` (the kind marker). A closed
   app workspace that `closed.reopen` brings back loads as an ordinary workspace with its app tab;
   the next `workspace.ensure_app` for that app restores its kind when it still has its shape, else
   makes a fresh app workspace.
@@ -86,7 +93,8 @@ Invariants (reducer and daemon, with tests):
 
 - Home: the existing home workspace keeps its id. On the first `workspace.ensure_home {app}`, a
   home that holds tabs moves every screen, pane and tab into its companion workspace ("Home
-  Tabs", directly after Home), then gets the Home app tab and kind. No tab is lost. Each step is
+  Tabs", directly after Home; created holding them in one commit, so it is never empty), then
+  gets the Home app tab and kind. No tab is lost. Each step is
   resumable and the call is idempotent (twice-run and restart tests). An empty home becomes the
   Home app screen with no companion.
 - App Store and CodeRouter are session-local internal page tabs today (`local-page:` ids, not
@@ -103,9 +111,9 @@ Invariants (reducer and daemon, with tests):
 
 ## 6. Open points
 
-1. The companion workspace is created in one commit and the home's screens move into it in a
-   second commit. A stop between them leaves an empty companion that the next call reuses.
-2. A brand-new workspace whose only tab is an app tab takes two commits today
-   (`workspace.create`, then `tab.create_app`).
+1. A new tab routed to an app workspace whose companion does not exist yet takes two commits:
+   the empty companion, then the tab. A client can see the companion empty in between.
+2. The companion marker is a side table (`app_tab_workspaces`), not a `workspace_kind` row:
+   that table's CHECK and one-home unique index would need a table rebuild.
 3. The manifest schema still lists `presentation.screen: appColumn`; the daemon accepts only
    `app`, so `cmux.apps.open` must map it.

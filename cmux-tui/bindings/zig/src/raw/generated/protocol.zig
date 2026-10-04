@@ -7,7 +7,7 @@ const client_runtime = @import("../client.zig");
 
 pub const schema_version: u16 = 2;
 pub const mux_protocol: u16 = 12;
-pub const ir_sha256 = "081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd";
+pub const ir_sha256 = "c7561f9965b022ecdd212ea0b7f60c556c13b5e7859b76b897c8f422204fa8fd";
 
 pub const AgentRecord = struct {
     session: wire.Nullable([]const u8),
@@ -720,6 +720,11 @@ pub const IdentifyResult = struct {
 
 pub const IdsResult = struct {
     ids: []const IdMapping,
+};
+
+pub const InitialApp = struct {
+    app: []const u8,
+    route: wire.Field([]const u8) = .absent,
 };
 
 /// The wire field intentionally carries a frontend-authored or runtime-authored arbitrary JSON document.
@@ -2417,16 +2422,25 @@ pub const Workspace = struct {
 
 pub const WorkspaceMutationResult = struct {
     changed: ?bool = null,
+    /// create-workspace with initial: the public browser id of the app tab.
+    content_resource_id: ?[]const u8 = null,
     generation: []const u8,
     index: u64,
     key: []const u8,
     registry_id: []const u8,
     replayed: bool,
+    /// create-workspace with initial: the surface of the app tab.
+    surface: ?Id = null,
+    /// create-workspace with initial: the public id of the app tab.
+    tab_resource_id: ?[]const u8 = null,
     workspace: Id,
     workspace_revision: u64,
 
     pub const cmux_wire_optional_nonnull_fields = [_][]const u8{
         "changed",
+        "content_resource_id",
+        "surface",
+        "tab_resource_id",
     };
 };
 
@@ -3699,6 +3713,7 @@ pub fn createTerminal(client: anytype, request: CreateTerminalRequest) !wire.Dec
 pub const CreateWorkspaceRequest = struct {
     expected_generation: wire.Field([]const u8) = .absent,
     expected_revision: wire.Field(u64) = .absent,
+    initial: wire.Field(InitialApp) = .absent,
     key: wire.Field([]const u8) = .absent,
     mutation_id: wire.Field([]const u8) = .absent,
     name: wire.Field([]const u8) = .absent,
@@ -3715,6 +3730,9 @@ pub fn createWorkspace(client: anytype, request: CreateWorkspaceRequest) !wire.D
             .authority = "control",
             .since = 7,
             .capability = "workspace-registry-v1",
+            .fields = &.{
+                .{ .name = "initial", .since = 12, .capability = "app-screens-v1" },
+            },
         },
         request,
     );

@@ -48,11 +48,11 @@ pub(crate) enum EmptyWorkspaceMark {
     None,
     Ephemeral,
     Home,
-    /// `app-screens-v1`: a workspace of kind `app` for this app.
+    /// `app-screens-v1`: an empty workspace of kind `app` for this app, as
+    /// builds before the one-commit app workspace creation left it (tests
+    /// of the resume path).
+    #[cfg(test)]
     App(String),
-    /// `app-screens-v1`: the companion ordinary workspace of this app
-    /// workspace (public id), placed directly after it.
-    Companion(String),
 }
 
 impl EmptyWorkspaceMark {
@@ -70,8 +70,8 @@ impl EmptyWorkspaceMark {
             Self::None => None,
             Self::Ephemeral => Some(("ephemeral", serde_json::Value::Bool(true))),
             Self::Home => Some(("kind", serde_json::Value::String(HOME_KIND.to_string()))),
+            #[cfg(test)]
             Self::App(app) => Some(("app", serde_json::Value::String(app.clone()))),
-            Self::Companion(app) => Some(("companion_of", serde_json::Value::String(app.clone()))),
         }
     }
 
@@ -92,15 +92,10 @@ impl EmptyWorkspaceMark {
                 mark_workspace_home(transaction, workspace_id)?;
                 place_home_first(transaction, workspace_key)
             }
+            #[cfg(test)]
             Self::App(app) => {
                 crate::state::app_screens_store::write_app_workspace(transaction, workspace_id, app)
             }
-            Self::Companion(app) => crate::state::app_screens::home::write_companion_mark(
-                transaction,
-                app,
-                workspace_id,
-                workspace_key,
-            ),
         }
     }
 }

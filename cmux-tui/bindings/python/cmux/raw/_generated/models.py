@@ -726,6 +726,13 @@ class IdsResult:
 
 
 @dataclass(frozen=True)
+class InitialApp:
+    __cmux_schema_path__: ClassVar[str] = 'types/InitialApp'
+    app: str
+    route: Union[str, None, MissingType] = field(default=MISSING)
+
+
+@dataclass(frozen=True)
 class KittyGraphicsState:
     __cmux_schema_path__: ClassVar[str] = 'types/KittyGraphicsState'
     alternate_next_image_id: int
@@ -1645,7 +1652,10 @@ class WorkspaceMutationResult:
     registry_id: str
     replayed: bool
     workspace_revision: int
+    surface: Union[Id, MissingType] = field(default=MISSING)
     changed: Union[bool, MissingType] = field(default=MISSING)
+    content_resource_id: Union[str, MissingType] = field(default=MISSING)
+    tab_resource_id: Union[str, MissingType] = field(default=MISSING)
 
 
 @dataclass(frozen=True)
@@ -2168,6 +2178,7 @@ class CreateWorkspaceRequest:
     expected_generation: Union[str, None, MissingType] = field(default=MISSING)
     origin: Union[str, None, MissingType] = field(default=MISSING)
     mutation_id: Union[str, None, MissingType] = field(default=MISSING)
+    initial: Union[InitialApp, None, MissingType] = field(default=MISSING)
 
 
 @dataclass(frozen=True)
@@ -4315,6 +4326,7 @@ __all__ = [
     'IdMapping',
     'IdentifyResult',
     'IdsResult',
+    'InitialApp',
     'KittyGraphicsState',
     'KittyImageAlias',
     'LayoutLeaf',

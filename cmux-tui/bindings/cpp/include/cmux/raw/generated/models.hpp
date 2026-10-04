@@ -14,7 +14,7 @@
 namespace cmux::raw {
 
 inline constexpr std::uint32_t kMuxProtocolVersion = 12U;
-inline constexpr std::string_view kProtocolIrSha256 = "081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd";
+inline constexpr std::string_view kProtocolIrSha256 = "c7561f9965b022ecdd212ea0b7f60c556c13b5e7859b76b897c8f422204fa8fd";
 
 struct AgentRecord;
 enum class AgentReportSource;
@@ -73,6 +73,7 @@ struct Id;
 struct IdMapping;
 struct IdentifyResult;
 struct IdsResult;
+struct InitialApp;
 struct JsonValue;
 struct KittyGraphicsState;
 struct KittyImageAlias;
@@ -1593,9 +1594,16 @@ struct CreateWorkspaceGroupRequest {
     friend bool operator==(const CreateWorkspaceGroupRequest&, const CreateWorkspaceGroupRequest&) = default;
 };
 
+struct InitialApp {
+    std::string app{};
+    Field<std::string> route{};
+    friend bool operator==(const InitialApp&, const InitialApp&) = default;
+};
+
 struct CreateWorkspaceRequest {
     Field<std::string> expected_generation{};
     Field<std::uint64_t> expected_revision{};
+    Field<InitialApp> initial{};
     Field<std::string> key{};
     Field<std::string> mutation_id{};
     Field<std::string> name{};
@@ -4253,11 +4261,14 @@ struct WorkspaceMovedEvent {
 
 struct WorkspaceMutationResult {
     std::optional<bool> changed{};
+    std::optional<std::string> content_resource_id{};
     std::string generation{};
     std::uint64_t index{};
     std::string key{};
     std::string registry_id{};
     bool replayed{};
+    std::optional<Id> surface{};
+    std::optional<std::string> tab_resource_id{};
     Id workspace{};
     std::uint64_t workspace_revision{};
     friend bool operator==(const WorkspaceMutationResult&, const WorkspaceMutationResult&) = default;
@@ -4633,6 +4644,12 @@ template <>
 struct Codec<IdsResult> {
     static Result<Json> encode(const IdsResult& value);
     static Result<IdsResult> decode(const Json& value);
+};
+
+template <>
+struct Codec<InitialApp> {
+    static Result<Json> encode(const InitialApp& value);
+    static Result<InitialApp> decode(const Json& value);
 };
 
 template <>

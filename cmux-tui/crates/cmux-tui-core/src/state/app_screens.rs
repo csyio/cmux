@@ -4,14 +4,14 @@
 //! an app workspace are in app_home.rs.
 //!
 //! `ensure_app` makes one workspace of kind `app` per app, holding its one
-//! screen with one `app` tab. Each step is its own commit and the next call
-//! resumes from what exists, so a crash between commits is repaired by the
-//! next call: (1) the workspace with its `app_workspaces` row, (2) the app
-//! tab, which gives the workspace its screen and pane, (3) the screen's kind
-//! row ([`Mux::commit_screen_app`]). The kind row is written last, so no
-//! step before it is refused by the app rules. A workspace whose screen
-//! changed between the commits stays an ordinary workspace with every tab,
-//! and the app gets a new workspace.
+//! screen with one `app` tab, in two commits: (1) the workspace with its app
+//! tab (`workspace.create {initial: app}`, so no client sees it empty), (2)
+//! the screen's kind row with the workspace's `app_workspaces` row
+//! ([`Mux::commit_screen_app`]). The kind row is written last, so no step
+//! before it is refused by the app rules. A stop between the commits leaves
+//! an ordinary workspace with one app tab, and the next call makes a new
+//! app workspace. An app workspace an older build left empty or without
+//! its kind is still finished by the next call.
 
 use std::sync::Mutex;
 
@@ -22,9 +22,9 @@ use crate::mux::*;
 use crate::resource::BrowserPublicId;
 use crate::state::app_screens_store::{
     APP_TAB_ENGINE, APP_TAB_URL, AppScreenKind, AppTabRecord, ScreenApp, app_tab_for_mutation,
-    live_app_workspace, validate_app_id, write_app_tab, write_app_workspace, write_screen_app,
+    live_app_workspace, validate_app_id, validate_display_name, write_app_display_name,
+    write_app_tab, write_app_workspace, write_screen_app,
 };
-use crate::state::home_store::EmptyWorkspaceMark;
 use crate::state::prelude::*;
 use crate::workspace_registry::FrontendBrowserRecord;
 
@@ -65,6 +65,7 @@ impl Mux {
         self: &Arc<Self>,
         app: &str,
         kind: AppScreenKind,
+        display_name: Option<&str>,
     ) -> anyhow::Result<EnsuredApp> {
         validate_app_id(app)?;
         let _ensuring = ENSURING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -88,12 +89,20 @@ impl Mux {
                 }
                 // A creation a crash interrupted before its kind commit.
                 Some((screen, None)) => {
-                    if let Ok(ensured) = self.finish_app_screen(&workspace_id, screen, app, kind) {
+                    let finished =
+                        self.finish_app_screen(&workspace_id, screen, app, kind, display_name);
+                    if let Ok(ensured) = finished {
                         return Ok(ensured);
                     }
                 }
                 None if screens == 0 => {
-                    return self.fill_app_workspace(&workspace_id, workspace, app, kind);
+                    return self.fill_app_workspace(
+                        &workspace_id,
+                        workspace,
+                        app,
+                        kind,
+                        display_name,
+                    );
                 }
                 None => {}
             }
@@ -102,24 +111,26 @@ impl Mux {
             // every tab, and the app gets a new workspace (its
             // `app_workspaces` row moves there).
         }
+        // One commit makes the workspace with its app tab (no client sees
+        // it empty); the kind commit then writes its kind and app rows.
         let mutation = WorkspaceMutation::local(APP_MUTATION_ORIGIN);
-        let correlation = format!("app-{}", WorkspacePublicId::random()?);
-        self.resource_create_empty_workspace_selected(
-            Self::ordinary_resource_selectors(),
+        let record = AppTabRecord { app: app.to_string(), route: None };
+        let (surface, _) = self.state_create_app_workspace(
             Some(app.to_string()),
-            &correlation,
+            None,
+            false,
+            record,
             None,
             &mutation,
-            EmptyWorkspaceMark::App(app.to_string()),
         )?;
-        self.reload_presentation(&self.workspace_registry.lock().unwrap())?;
-        self.emit(MuxEvent::TreeChanged);
+        let screen = self.screen_of_surface(surface)?;
         let workspace_id = self
-            .read_registry_state(|connection| live_app_workspace(connection, app))?
-            .context("the created app workspace has no app row")?
-            .0;
-        let workspace = self.workspace_slot_of(&workspace_id)?;
-        self.fill_app_workspace(&workspace_id, workspace, app, kind)
+            .with_state(|state| {
+                let workspace = state.resource_indexes.screen_workspace.get(&screen)?;
+                state.resource_indexes.workspace_ids.get(workspace).map(ToString::to_string)
+            })
+            .context("the created app workspace disappeared")?;
+        self.finish_app_screen(&workspace_id, screen, app, kind, display_name)
     }
 
     pub(crate) fn workspace_slot_of(&self, workspace_id: &str) -> anyhow::Result<WorkspaceId> {
@@ -140,11 +151,12 @@ impl Mux {
         workspace: WorkspaceId,
         app: &str,
         kind: AppScreenKind,
+        display_name: Option<&str>,
     ) -> anyhow::Result<EnsuredApp> {
         let record = AppTabRecord { app: app.to_string(), route: None };
         let tab = self.new_app_tab(AppTabTarget::Workspace(workspace), record, None, None)?;
         let screen = self.screen_of_surface(tab.surface.id)?;
-        self.finish_app_screen(workspace_id, screen, app, kind)
+        self.finish_app_screen(workspace_id, screen, app, kind, display_name)
     }
 
     fn finish_app_screen(
@@ -153,9 +165,10 @@ impl Mux {
         screen: ScreenId,
         app: &str,
         kind: AppScreenKind,
+        display_name: Option<&str>,
     ) -> anyhow::Result<EnsuredApp> {
         let screen_app = ScreenApp { kind, app: app.to_string() };
-        let commit = self.commit_screen_app(screen, screen_app)?;
+        let commit = self.commit_screen_app_named(screen, screen_app, display_name)?;
         let screen_id = self.public_screen(screen)?;
         Ok(EnsuredApp {
             workspace_id: workspace_id.to_string(),
@@ -245,6 +258,21 @@ impl Mux {
         screen: ScreenId,
         screen_app: ScreenApp,
     ) -> anyhow::Result<ResourcePatchCommit> {
+        self.commit_screen_app_named(screen, screen_app, None)
+    }
+
+    /// [`Self::commit_screen_app`], recording the app's English
+    /// `display_name` (the default name of its companion) in the same commit.
+    pub(crate) fn commit_screen_app_named(
+        self: &Arc<Self>,
+        screen: ScreenId,
+        screen_app: ScreenApp,
+        display_name: Option<&str>,
+    ) -> anyhow::Result<ResourcePatchCommit> {
+        if let Some(name) = display_name {
+            validate_display_name(name)?;
+        }
+        let display_name = display_name.map(str::to_string);
         let public = self.public_screen(screen)?;
         // The fences every topology effect holds from its app-rule check to
         // its commit: a kind commit never lands between the two.
@@ -292,7 +320,7 @@ impl Mux {
                     &mut projected,
                     json!({"screen": public}),
                 )?;
-                let (row, id) = (screen_app.clone(), public.clone());
+                let (row, id, display) = (screen_app.clone(), public.clone(), display_name.clone());
                 let app = screen_app.app.clone();
                 Ok(ResourceMutationPlan::new(
                     projection.patch,
@@ -306,6 +334,9 @@ impl Mux {
                         // The screen's workspace is its app's workspace (the
                         // Home workspace gets its row here).
                         write_app_workspace(transaction, &workspace_id, &app)?;
+                        if let Some(display) = &display {
+                            write_app_display_name(transaction, &app, display)?;
+                        }
                         // The kind commit itself is checked on the rows it
                         // commits (the patch check ran before the row).
                         crate::state::app_commit_rules::check_screen(transaction, &id)?;
@@ -321,6 +352,8 @@ impl Mux {
             },
         )?;
         if !commit.replayed {
+            // The raw tree reads the workspace's app row from presentation.
+            self.reload_presentation(&self.workspace_registry.lock().unwrap())?;
             self.emit_screen_changed_for_transaction(&[screen], None);
             self.emit(MuxEvent::LayoutChanged(screen));
             self.emit(MuxEvent::TreeChanged);
@@ -465,6 +498,43 @@ impl Mux {
             self.publish_journal_event();
         }
         Ok((self.resource_surface_for_created_path(&commit.result)?, commit.replayed))
+    }
+}
+
+impl Mux {
+    /// `workspace.create {initial_content: "app", initial: {app, route?}}`
+    /// and raw `create-workspace {initial}`: a new ordinary workspace whose
+    /// only tab is an app tab, in one commit (the session-target
+    /// `tab.create_browser` path, which makes the workspace with its tab),
+    /// so no client sees it empty. A retry with the same key returns the
+    /// same tab.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn state_create_app_workspace(
+        self: &Arc<Self>,
+        name: Option<String>,
+        key: Option<String>,
+        ephemeral: bool,
+        record: AppTabRecord,
+        expected_revision: Option<u64>,
+        mutation: &WorkspaceMutation,
+    ) -> anyhow::Result<(SurfaceId, bool)> {
+        let mut fields = Map::new();
+        if let Some(name) = name {
+            Self::validate_workspace_name(&name)?;
+            fields.insert("workspace_name".into(), Value::String(name));
+        }
+        if let Some(key) = key {
+            anyhow::ensure!(
+                crate::workspace_registry::is_canonical_workspace_key(&key),
+                "bad request: workspace key must be a lowercase UUID"
+            );
+            fields.insert("workspace_key".into(), Value::String(key));
+        }
+        if ephemeral {
+            fields.insert("workspace_ephemeral".into(), Value::Bool(true));
+        }
+        let selectors = Self::ordinary_resource_selectors();
+        self.state_create_app_tab(selectors, record, fields, expected_revision, mutation)
     }
 }
 

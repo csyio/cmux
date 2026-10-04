@@ -329,7 +329,7 @@ type TerminalReservationHook = Arc<dyn Fn(&str) + Send + Sync>;
 type RestoredViewport = (std::collections::BTreeMap<SplitId, f32>, Option<f32>, Vec<LayoutColumn>);
 
 const TERMINAL_DIMENSION_MAX: u16 = 10_000;
-const WORKSPACE_REGISTRY_LIMIT: usize = 4_096;
+pub(crate) const WORKSPACE_REGISTRY_LIMIT: usize = 4_096;
 const WORKSPACE_KEY_MAX_BYTES: usize = 256;
 const WORKSPACE_NAME_MAX_BYTES: usize = 1_024;
 const PROVIDER_WORKSPACE_AUTHORITY_MIN_BYTES: usize = 32;
@@ -2761,7 +2761,7 @@ struct RestoredTerminalBinding {
 }
 
 impl Mux {
-    fn default_workspace_name(state: &State) -> String {
+    pub(crate) fn default_workspace_name(state: &State) -> String {
         // Provider-created workspaces use a stable, human-readable sequence.
         // Existing names (including user-renamed workspaces) are left untouched;
         // only the next automatically generated name is derived here. The
@@ -4414,7 +4414,7 @@ impl Mux {
         mux
     }
 
-    fn next_id(&self) -> u64 {
+    pub(crate) fn next_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
@@ -4438,7 +4438,7 @@ impl Mux {
             .expect("in-process resize owner allocation cannot fail")
     }
 
-    fn new_workspace_key() -> anyhow::Result<String> {
+    pub(crate) fn new_workspace_key() -> anyhow::Result<String> {
         let mut bytes = [0u8; 16];
         getrandom::fill(&mut bytes).map_err(|_| {
             anyhow::anyhow!(
@@ -4481,7 +4481,7 @@ impl Mux {
         Ok(())
     }
 
-    fn validate_workspace_name(name: &str) -> anyhow::Result<()> {
+    pub(crate) fn validate_workspace_name(name: &str) -> anyhow::Result<()> {
         if name.len() > WORKSPACE_NAME_MAX_BYTES {
             anyhow::bail!("workspace name exceeds {WORKSPACE_NAME_MAX_BYTES} bytes");
         }

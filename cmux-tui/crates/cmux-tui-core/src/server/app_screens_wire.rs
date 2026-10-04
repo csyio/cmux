@@ -58,6 +58,61 @@ pub(super) fn new_app_tab(mux: &Arc<Mux>, params: NewAppTabParams) -> anyhow::Re
     }))
 }
 
+/// `create-workspace {initial: {app, route?}}`: the new workspace starts
+/// with one app tab instead of being empty, in one commit.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct InitialApp {
+    app: String,
+    #[serde(default)]
+    route: Option<String>,
+}
+
+pub(super) fn create_workspace(
+    mux: &Arc<Mux>,
+    name: Option<String>,
+    key: Option<String>,
+    initial: InitialApp,
+    request: &super::MutationRequest,
+    mutation: &WorkspaceMutation,
+) -> anyhow::Result<Value> {
+    anyhow::ensure!(
+        request.expected_generation.is_none(),
+        "bad request: expected_generation is not supported with initial"
+    );
+    let record = AppTabRecord { app: initial.app, route: initial.route };
+    let (surface, replayed) = mux.state_create_app_workspace(
+        name,
+        key,
+        false,
+        record,
+        request.expected_revision,
+        mutation,
+    )?;
+    let placed = mux.with_state(|state| {
+        let pane = state.pane_of(surface)?;
+        let (index, _) = state.screen_of(pane)?;
+        let workspace = &state.workspaces[index];
+        let identity = state.surfaces.get(&surface)?.resource_identity().cloned()?;
+        Some((workspace.id, workspace.key.clone(), index, state.workspace_revision, identity))
+    });
+    let (workspace, key, index, revision, identity) =
+        placed.ok_or_else(|| anyhow::anyhow!("the created app tab disappeared"))?;
+    let (registry_id, generation) = mux.registry_identity();
+    Ok(json!({
+        "workspace": workspace,
+        "key": key,
+        "index": index,
+        "workspace_revision": revision,
+        "replayed": replayed,
+        "registry_id": registry_id,
+        "generation": generation,
+        "surface": surface,
+        "tab_resource_id": identity.tab_id.as_str(),
+        "content_resource_id": identity.content_id.as_str(),
+    }))
+}
+
 /// The app fields of one raw screen: `kind` and `app` on an app screen; an
 /// ordinary screen gets nothing.
 pub(super) fn merge_screen_fields(state: &State, screen: &Screen, value: &mut Value) {

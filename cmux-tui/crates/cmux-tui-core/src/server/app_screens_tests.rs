@@ -468,8 +468,30 @@ fn home_becomes_an_app_workspace_and_keeps_every_tab() {
                                     "origin": "home-test", "mutation_id": format!("c{index}")}));
         conversations.push(created["tab_resource_id"].as_str().unwrap().to_string());
     }
-    let migrate = json!({"app": HOME});
+    let migrate = json!({"app": HOME, "display_name": "Home"});
+    let before = wire.mux.with_state(|state| state.resource_revision);
     wire.v2_ok("workspace.ensure_home", migrate.clone(), Some("connect-2"));
+    // The companion is created holding the moved screens, in one commit:
+    // no batch shows it empty.
+    let batches = wire.mux.resource_events_after(before).unwrap().batches;
+    let created = batches
+        .iter()
+        .find(|batch| {
+            batch.changes.as_array().unwrap().iter().any(|change| {
+                change["resource"] == "workspace" && change["value"]["extra"]["kind"] == "app_tabs"
+            })
+        })
+        .expect("a batch creates the companion");
+    let changes = created.changes.as_array().unwrap();
+    let companion = changes
+        .iter()
+        .find(|change| change["value"]["extra"]["kind"] == "app_tabs")
+        .and_then(|change| change["id"].as_str())
+        .unwrap();
+    let moved = changes.iter().any(|change| {
+        change["resource"] == "screen" && change["value"]["workspace_id"] == companion
+    });
+    assert!(moved, "the companion appeared without its tabs: {:?}", created.changes);
     let check = |wire: &mut Wire| -> (Value, Value) {
         let tree = wire.tree();
         let home = raw_workspace(&tree, &home_id);
@@ -486,7 +508,24 @@ fn home_becomes_an_app_workspace_and_keeps_every_tab() {
         let companion_id = order[1]["workspace"]["workspace_id"].as_str().unwrap().to_string();
         let companion = raw_workspace(&tree, &companion_id);
         assert_eq!(companion["name"], "Home Tabs", "{companion}");
-        assert_eq!(companion["kind"], "normal", "{companion}");
+        assert_eq!(
+            (companion["kind"].as_str(), companion["app"].as_str()),
+            (Some("app_tabs"), Some(HOME))
+        );
+        assert_eq!(home["app"], HOME, "{home}");
+        // v2: the marker clients localize the name from; the home keeps
+        // its own kind.
+        let snapshot = wire.snapshot();
+        let v2 = |id: &str| {
+            let workspaces = snapshot["workspaces"].as_array().unwrap();
+            workspaces.iter().find(|item| item["id"] == id).cloned().unwrap()
+        };
+        let (v2_home, v2_companion) = (v2(&home_id), v2(&companion_id));
+        assert_eq!(v2_home["extra"]["kind"], "home", "{v2_home}");
+        assert_eq!(v2_home["extra"]["app"], HOME, "{v2_home}");
+        assert_eq!(v2_companion["extra"]["kind"], "app_tabs", "{v2_companion}");
+        assert_eq!(v2_companion["extra"]["app"], HOME, "{v2_companion}");
+        assert_eq!(v2_companion["extra"]["default_title"], true, "{v2_companion}");
         let screens = companion["screens"].as_array().unwrap();
         let moved = screens.iter().flat_map(tabs).collect::<Vec<_>>();
         for tab_id in &conversations {

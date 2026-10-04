@@ -64,6 +64,7 @@ MODEL_BY_PATH = {
     'types/IdMapping': models.IdMapping,
     'types/IdentifyResult': models.IdentifyResult,
     'types/IdsResult': models.IdsResult,
+    'types/InitialApp': models.InitialApp,
     'types/KittyGraphicsState': models.KittyGraphicsState,
     'types/KittyImageAlias': models.KittyImageAlias,
     'types/Layout/variants/leaf': models.LayoutLeaf,

@@ -170,4 +170,7 @@ test "every generated optional non-null field rejects explicit null" {
     try expectExplicitNullRejected(protocol.Workspace, "key");
     try expectExplicitNullRejected(protocol.Workspace, "short_id");
     try expectExplicitNullRejected(protocol.WorkspaceMutationResult, "changed");
+    try expectExplicitNullRejected(protocol.WorkspaceMutationResult, "content_resource_id");
+    try expectExplicitNullRejected(protocol.WorkspaceMutationResult, "surface");
+    try expectExplicitNullRejected(protocol.WorkspaceMutationResult, "tab_resource_id");
 }

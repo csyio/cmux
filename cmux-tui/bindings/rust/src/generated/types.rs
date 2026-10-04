@@ -1,5 +1,5 @@
 // This file is generated. Do not edit by hand.
-// cmux-tui mux protocol 12, IR 081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd.
+// cmux-tui mux protocol 12, IR c7561f9965b022ecdd212ea0b7f60c556c13b5e7859b76b897c8f422204fa8fd.
 // The emitter owns this layout so generation is independent of the installed rustfmt.
 
 use crate::{Nullable, Optional};
@@ -643,6 +643,14 @@ pub struct IdentifyResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IdsResult {
     pub ids: Vec<IdMapping>,
+}
+
+#[rustfmt::skip]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InitialApp {
+    pub app: String,
+    #[serde(default, skip_serializing_if = "Optional::is_missing")]
+    pub route: Optional<String>,
 }
 
 #[rustfmt::skip]
@@ -2125,11 +2133,20 @@ pub struct Workspace {
 pub struct WorkspaceMutationResult {
     #[serde(default, deserialize_with = "crate::presence::deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
     pub changed: Option<bool>,
+    /// create-workspace with initial: the public browser id of the app tab.
+    #[serde(default, deserialize_with = "crate::presence::deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
+    pub content_resource_id: Option<String>,
     pub generation: String,
     pub index: u64,
     pub key: String,
     pub registry_id: String,
     pub replayed: bool,
+    /// create-workspace with initial: the surface of the app tab.
+    #[serde(default, deserialize_with = "crate::presence::deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
+    pub surface: Option<Id>,
+    /// create-workspace with initial: the public id of the app tab.
+    #[serde(default, deserialize_with = "crate::presence::deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
+    pub tab_resource_id: Option<String>,
     pub workspace: Id,
     pub workspace_revision: u64,
 }

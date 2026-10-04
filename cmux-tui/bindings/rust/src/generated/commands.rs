@@ -1,5 +1,5 @@
 // This file is generated. Do not edit by hand.
-// cmux-tui mux protocol 12, IR 081fdb825146d217b738c5c52f768c3a0987a33d426a620d6583e91c05cb09dd.
+// cmux-tui mux protocol 12, IR c7561f9965b022ecdd212ea0b7f60c556c13b5e7859b76b897c8f422204fa8fd.
 // The emitter owns this layout so generation is independent of the installed rustfmt.
 
 use super::metadata::*;
@@ -789,6 +789,8 @@ pub struct CreateWorkspaceRequest {
     pub expected_generation: Optional<String>,
     #[serde(alias = "expected_terminal_revision", default, skip_serializing_if = "Optional::is_missing")]
     pub expected_revision: Optional<u64>,
+    #[serde(default, skip_serializing_if = "Optional::is_missing")]
+    pub initial: Optional<T::InitialApp>,
     #[serde(default, skip_serializing_if = "Optional::is_missing")]
     pub key: Optional<String>,
     #[serde(default, skip_serializing_if = "Optional::is_missing")]
@@ -3183,6 +3185,10 @@ impl CmuxClient {
     }
 
     pub fn create_workspace(&mut self, request: CreateWorkspaceRequest) -> Result<CreateWorkspaceResult> {
+        if !request.initial.is_missing() {
+            self.require_protocol_field("create-workspace", 12)?;
+            self.require_capability_field("create-workspace", "app-screens-v1")?;
+        }
         self.execute(&CREATE_WORKSPACE_METADATA, &request)
     }
 

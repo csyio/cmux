@@ -118,6 +118,7 @@ declare namespace Cmux {
   type Host = { id: Cmux.HostId; name: string; platform: Cmux.Platform; owner_user: Cmux.UserId; enrolled_by: Cmux.InstallId; enrolled_at: number; kind?: Cmux.HostKind; wg_public_key?: Cmux.WgPublicKey; tags?: Array<string> }
   type HostId = string
   type HostKind = "device" | "server"
+  type InitialApp = { app: string; route?: string }
   type InputModifier = "shift" | "control" | "alt" | "meta"
   type Install = { id: Cmux.InstallId; device: Cmux.DeviceId; kind: Cmux.InstallKind; name: string; device_name: string; platform: Cmux.Platform; public_jwk: Cmux.PublicJwk; thumbprint: string; grant: Cmux.GrantId; created_at: number; revoked_at: number | null; bound_team?: Cmux.TeamId; sso_team?: Cmux.TeamId }
   type InstallId = string
@@ -1342,11 +1343,11 @@ interface CmuxGlobal {
   }
   workspace: {
     /** `workspace.create` (mutation, scope `workspace:write`) */
-    create: CmuxOp<{ machine?: string; session?: string; name?: string; initial_content: "terminal" | "empty"; ephemeral?: boolean; correlation_key?: string; expected_revision?: string }, Cmux.MutationResult<Cmux.CreatedPath>>
+    create: CmuxOp<{ machine?: string; session?: string; name?: string; initial_content: "terminal" | "empty" | "app"; initial?: Cmux.InitialApp; ephemeral?: boolean; correlation_key?: string; expected_revision?: string }, Cmux.MutationResult<Cmux.CreatedPath>>
     /** `workspace.ensure_app` (mutation, scope `workspace:write`) */
-    ensure_app: CmuxOp<{ machine?: string; session?: string; app: string; kind: "app" }, Cmux.MutationResult<Cmux.EnsuredAppScreen>>
+    ensure_app: CmuxOp<{ machine?: string; session?: string; app: string; kind: "app"; display_name?: string }, Cmux.MutationResult<Cmux.EnsuredAppScreen>>
     /** `workspace.ensure_home` (mutation, scope `workspace:write`) */
-    ensure_home: CmuxOp<{ machine?: string; session?: string; app?: string }, Cmux.MutationResult<Cmux.CreatedWorkspaceOnly>>
+    ensure_home: CmuxOp<{ machine?: string; session?: string; app?: string; display_name?: string }, Cmux.MutationResult<Cmux.CreatedWorkspaceOnly>>
     /** `workspace.focus` (mutation, scope `workspace:write`) */
     focus: CmuxOp<{ machine?: string; session?: string; workspace: string; expected_revision?: string }, Cmux.MutationResult<Cmux.WorkspaceSnapshot>>
     /** `workspace.get` (read, scope `workspace:read`) */

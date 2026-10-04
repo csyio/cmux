@@ -5,10 +5,14 @@
 //!   written in the transaction that creates the workspace.
 //! - `app_tabs`: the app (and route) a frontend-rendered tab shows, written
 //!   in the commit of its frontend browser row, like `conversation_tabs`.
-//! - `app_companion_workspaces`: the ordinary workspace that takes the new
-//!   tabs sent to an app workspace (placed directly after it).
-//! - `resource_screen_kinds`: a screen of kind `app` and its app. It is a resource side table (screen_rows.rs pattern): created with
-//!   the column docks, deleted when its screen is tombstoned, and overlaid at
+//! - `app_tab_workspaces`: the companion of an app workspace, an ordinary
+//!   workspace of kind `app_tabs` that takes the new tabs sent to the app
+//!   workspace (one per app, placed directly after it). The row is the
+//!   kind marker: clients localize the name from `extra.kind` and
+//!   `extra.app`; the stored English name is the fallback and a rename by
+//!   the user is final. Written in the commit that creates the workspace.
+//! - `resource_screen_kinds`: a screen of kind `app` and its app. It is a
+//!   resource side table (screen_rows.rs pattern): deleted when its screen is tombstoned, and overlaid at
 //!   load only when the screen still has its shape ([`load_screen_apps`]); a
 //!   screen that lost it loads as an ordinary screen and keeps every tab.
 //!
@@ -26,6 +30,8 @@ use serde_json::{Map, Value, json};
 pub(crate) const APP_SCREENS_CAPABILITY: &str = "app-screens-v1";
 /// The workspace kind and the canonical tab kind (`content_kind`, raw `kind`).
 pub(crate) const APP_KIND: &str = "app";
+/// The workspace kind of the companion of an app workspace.
+pub(crate) const APP_TABS_KIND: &str = "app_tabs";
 /// The frontend record of an app tab: the app renders its own page.
 pub(crate) const APP_TAB_URL: &str = "about:blank";
 pub(crate) const APP_TAB_ENGINE: &str = "webkit";
@@ -46,9 +52,15 @@ pub(crate) fn create_app_state_schema(transaction: &Transaction<'_>) -> anyhow::
            origin TEXT,
            mutation_id TEXT
          );
-         CREATE TABLE IF NOT EXISTS app_companion_workspaces (
-           app_workspace_id TEXT PRIMARY KEY NOT NULL,
-           workspace_id TEXT NOT NULL
+         CREATE TABLE IF NOT EXISTS app_tab_workspaces (
+           workspace_id TEXT PRIMARY KEY NOT NULL,
+           app_id TEXT NOT NULL UNIQUE,
+           default_name TEXT NOT NULL,
+           renamed INTEGER NOT NULL DEFAULT 0
+         );
+         CREATE TABLE IF NOT EXISTS app_display_names (
+           app_id TEXT PRIMARY KEY NOT NULL,
+           display_name TEXT NOT NULL
          );
          CREATE UNIQUE INDEX IF NOT EXISTS app_tabs_by_mutation
            ON app_tabs(origin, mutation_id) WHERE mutation_id IS NOT NULL;",
@@ -182,46 +194,166 @@ pub struct AppPresentation {
     pub workspaces: HashMap<String, String>,
     /// App tab records, by public browser id.
     pub tabs: HashMap<String, AppTabRecord>,
+    /// The app of every live companion workspace (kind `app_tabs`), by
+    /// workspace key.
+    pub companions: HashMap<String, String>,
 }
 
 impl AppPresentation {
     pub(crate) fn read(connection: &Connection) -> anyhow::Result<Self> {
-        Ok(Self { workspaces: read_app_workspaces(connection)?, tabs: read_app_tabs(connection)? })
+        Ok(Self {
+            workspaces: read_app_workspaces(connection)?,
+            tabs: read_app_tabs(connection)?,
+            companions: read_companions(connection)?,
+        })
     }
 }
 
 /// The screen kinds of the live state, by screen slot.
 pub(crate) type ScreenApps = HashMap<crate::ScreenId, ScreenApp>;
 
-/// The companion ordinary workspace of an app workspace, if it is live.
-pub(crate) fn live_companion(
-    connection: &Connection,
-    app_workspace: &str,
-) -> anyhow::Result<Option<String>> {
+/// The live companion workspace (kind `app_tabs`) of `app`.
+pub(crate) fn live_companion(connection: &Connection, app: &str) -> anyhow::Result<Option<String>> {
     Ok(connection
         .query_row(
-            "SELECT c.workspace_id FROM app_companion_workspaces AS c
+            "SELECT c.workspace_id FROM app_tab_workspaces AS c
              JOIN resource_workspaces AS rw ON rw.public_id = c.workspace_id
-             WHERE c.app_workspace_id = ?1 AND rw.deleted_revision IS NULL",
-            [app_workspace],
+             WHERE c.app_id = ?1 AND rw.deleted_revision IS NULL",
+            [app],
             |row| row.get::<_, String>(0),
         )
         .optional()?)
 }
 
-/// Record `workspace` as the companion of `app_workspace` (in the commit
-/// that creates it).
+/// The app whose companion `workspace_id` is.
+pub(crate) fn companion_app(
+    connection: &Connection,
+    workspace_id: &str,
+) -> anyhow::Result<Option<String>> {
+    Ok(connection
+        .query_row(
+            "SELECT app_id FROM app_tab_workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+/// The app of every live companion workspace, keyed by workspace key.
+fn read_companions(connection: &Connection) -> anyhow::Result<HashMap<String, String>> {
+    let mut statement = connection.prepare(
+        "SELECT rw.workspace_key, c.app_id
+         FROM app_tab_workspaces AS c
+         JOIN resource_workspaces AS rw ON rw.public_id = c.workspace_id
+         WHERE rw.deleted_revision IS NULL",
+    )?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<Result<HashMap<_, _>, _>>()?;
+    Ok(rows)
+}
+
+/// Mark `workspace` as the companion of `app`, named `default_name` by the
+/// daemon (in the commit that creates it). A row left by a closed companion
+/// of the same app is replaced.
 pub(crate) fn write_companion(
     transaction: &Transaction<'_>,
-    app_workspace: &str,
+    app: &str,
     workspace: &str,
+    default_name: &str,
 ) -> anyhow::Result<()> {
+    validate_app_id(app)?;
+    transaction.execute("DELETE FROM app_tab_workspaces WHERE app_id = ?1", [app])?;
     transaction.execute(
-        "INSERT INTO app_companion_workspaces(app_workspace_id, workspace_id) VALUES(?1, ?2)
-         ON CONFLICT(app_workspace_id) DO UPDATE SET workspace_id = excluded.workspace_id",
-        params![app_workspace, workspace],
+        "INSERT INTO app_tab_workspaces(workspace_id, app_id, default_name) VALUES(?1, ?2, ?3)",
+        params![workspace, app, default_name],
     )?;
     Ok(())
+}
+
+/// A committed name other than the daemon's default renames a companion
+/// for good (`extra.default_title` turns false and stays false). Runs on
+/// the workspace rows of every commit, in its transaction, so every rename
+/// path counts.
+pub(crate) fn note_companion_renames(
+    transaction: &Transaction<'_>,
+    patch: &crate::workspace_registry::ResourcePatch,
+) -> anyhow::Result<()> {
+    let mut ready = None;
+    for change in &patch.changes {
+        let crate::workspace_registry::ResourceChange::UpsertWorkspace { workspace, .. } = change
+        else {
+            continue;
+        };
+        if ready.is_none() {
+            ready = Some(table_exists(transaction, "app_tab_workspaces")?);
+        }
+        if ready == Some(false) {
+            return Ok(());
+        }
+        transaction.execute(
+            "UPDATE app_tab_workspaces SET renamed = 1
+             WHERE workspace_id = ?1 AND renamed = 0 AND default_name != ?2",
+            params![workspace.public_id.as_str(), workspace.name],
+        )?;
+    }
+    Ok(())
+}
+
+fn table_exists(connection: &Connection, name: &str) -> anyhow::Result<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [name],
+        |row| row.get::<_, bool>(0),
+    )?)
+}
+
+/// The English name a client gave `app` (`display_name` on
+/// `workspace.ensure_app` and `workspace.ensure_home`).
+pub(crate) fn app_display_name(
+    connection: &Connection,
+    app: &str,
+) -> anyhow::Result<Option<String>> {
+    Ok(connection
+        .query_row("SELECT display_name FROM app_display_names WHERE app_id = ?1", [app], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()?)
+}
+
+/// Record the English name of `app`; the latest one a client sent wins.
+pub(crate) fn write_app_display_name(
+    transaction: &Transaction<'_>,
+    app: &str,
+    display_name: &str,
+) -> anyhow::Result<()> {
+    transaction.execute(
+        "INSERT INTO app_display_names(app_id, display_name) VALUES(?1, ?2)
+         ON CONFLICT(app_id) DO UPDATE SET display_name = excluded.display_name",
+        params![app, display_name],
+    )?;
+    Ok(())
+}
+
+/// A `display_name` as clients send it: a short single-line name.
+pub(crate) fn validate_display_name(name: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !name.trim().is_empty() && name.len() <= 128 && !name.chars().any(char::is_control),
+        "bad request: display_name must be 1 to 128 bytes without control characters"
+    );
+    Ok(())
+}
+
+/// Whether the companion `workspace_id` still has the daemon's default name.
+fn companion_default_title(connection: &Connection, workspace_id: &str) -> anyhow::Result<bool> {
+    Ok(connection
+        .query_row(
+            "SELECT renamed FROM app_tab_workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some_and(|renamed| renamed == 0))
 }
 
 /// What an `app` tab shows: an app and an optional route inside it.
@@ -391,9 +523,19 @@ pub(crate) fn workspace_extra(
     workspace_id: &str,
     fields: &mut Map<String, Value>,
 ) -> anyhow::Result<()> {
-    if let Some(app) = workspace_app(connection, workspace_id)? {
-        fields.insert("kind".into(), json!(APP_KIND));
+    // The home workspace keeps `kind: home` when it is the Home app's
+    // workspace; `app` names its app.
+    let marked = match workspace_app(connection, workspace_id)? {
+        Some(app) => Some((APP_KIND, app)),
+        None => companion_app(connection, workspace_id)?.map(|app| (APP_TABS_KIND, app)),
+    };
+    if let Some((kind, app)) = marked {
+        fields.entry("kind").or_insert_with(|| json!(kind));
         fields.insert("app".into(), json!(app));
+        if kind == APP_TABS_KIND {
+            let default = companion_default_title(connection, workspace_id)?;
+            fields.insert("default_title".into(), json!(default));
+        }
     }
     Ok(())
 }
