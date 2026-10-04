@@ -5,6 +5,9 @@ import Testing
 /// named stage instead of hanging the run.
 @MainActor
 enum PageTestWait {
+    /// What a timed-out wait prints (the shell's events and state of the host under test).
+    static var onTimeout: (() async -> String)?
+
     private final class Once<T: Sendable> {
         var continuation: CheckedContinuation<T?, Never>?
         func finish(_ value: T?) {
@@ -26,6 +29,7 @@ enum PageTestWait {
             }
         }
         print("PAGE_TEST_STAGE \(stage): \(value == nil ? "TIMED OUT" : "ok")")
+        if value == nil, let dump = onTimeout { print("PAGE_TEST_STAGE \(stage) state: \(await dump())") }
         if value == nil { Issue.record("\(stage) timed out after \(seconds) s") }
         return value
     }

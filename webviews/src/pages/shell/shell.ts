@@ -61,6 +61,8 @@ export class PageShell {
   private readonly modules = new Map<string, ShellPageModule>();
   private readonly loads = new Map<string, Promise<ShellPageModule>>();
   private mounted: Mounted | null = null;
+  /** The last shell events (claim, mount, reset), for the host's debug state and its tests. */
+  readonly events: string[] = [];
   private cleanup: Promise<void> | null = null;
   private claims = 0;
 
@@ -101,7 +103,13 @@ export class PageShell {
   }
 
   /** `page.claim`: mounts the page (synchronously when its chunk is loaded); a mounted page is reset first. */
+  private note(event: string): void {
+    this.events.push(event);
+    if (this.events.length > 50) this.events.shift();
+  }
+
   claim(params: unknown): Promise<{ page: string }> | { page: string } {
+    this.note(`claim ${String((params as { page?: unknown } | null)?.page)}`);
     const { page: id, route, context } = (params ?? {}) as { page?: unknown; route?: unknown; context?: unknown };
     const page = this.options.pages.find((entry) => entry.id === id);
     if (typeof id !== "string" || !page) throw pageError("cmux.shell.unknown_page", String(id));
@@ -114,6 +122,7 @@ export class PageShell {
     };
     const module = this.modules.get(id);
     if (module && !this.cleanup) return mount(module);
+    this.note(module ? "claim waits for the last reset" : "claim waits for the page chunk");
     return Promise.all([this.load(page), this.cleanup]).then(([loaded]) => mount(loaded));
   }
 
@@ -147,10 +156,12 @@ export class PageShell {
       throw error;
     }
     this.mounted = { page: id, client, unmount };
+    this.note(`mounted ${id}`);
   }
 
   /** `page.reset`: unmounts the page, ends its calls and streams, clears the document. */
   reset(): Promise<{ reset: true }> {
+    this.note("reset");
     const mounted = this.mounted;
     this.mounted = null;
     this.claims++;

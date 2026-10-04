@@ -116,6 +116,7 @@ struct PageShellBenchTests {
                     content.addSubview(host)
                 }
                 claimMs.append((CACurrentMediaTime() - start) * 1000)
+                PageTestWait.onTimeout = { await PageHostPoolTests.shellState(host) }
                 if mountedAt == nil {
                     _ = await PageTestWait.value("bench claim mounted") { (done: @escaping (Bool) -> Void) in mountDone = done }
                 }

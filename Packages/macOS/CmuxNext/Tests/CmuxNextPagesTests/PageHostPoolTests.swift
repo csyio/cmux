@@ -94,6 +94,14 @@ import WebKit
         var mounted: Int
     }
 
+    /// The shell's own view of `host`, for a timed-out wait.
+    static func shellState(_ host: PageWebView?) async -> String {
+        guard let host else { return "no host" }
+        let script = "return JSON.stringify({ready: document.readyState, shell: typeof globalThis.cmuxShell, current: globalThis.cmuxShell?.current ?? null, events: globalThis.cmuxShell?.events ?? null, handler: typeof globalThis.webkit?.messageHandlers?.cmuxPage})"
+        let state = (try? await host.webKitView.callAsyncJavaScript(script, contentWorld: .page)) as? String ?? "no answer"
+        return "loaded=\(host.isLoaded) url=\(host.webKitView.url?.absoluteString ?? "nil") window=\(host.window != nil) \(state)"
+    }
+
     static func js(_ host: PageWebView, _ script: String) async throws -> Any? {
         try await host.webKitView.callAsyncJavaScript(script, contentWorld: .page)
     }
@@ -114,6 +122,8 @@ import WebKit
         var host: PageWebView?
         let result = await reply("claim of \(descriptor.id) mounted") { done in
             host = pool.claim(descriptor, routes: routes, window: window, mounted: done)
+            let claimed = host
+            PageTestWait.onTimeout = { await shellState(claimed) }
             if host == nil { done(.failure(.closed)) }
         }
         #expect(result == .success(["page": .string(descriptor.id)]))
@@ -161,6 +171,7 @@ import WebKit
         let provider = ProbeProvider()
         let routes = [PageRoute(prefix: "cmux.shell.probe.", provider: provider)]
         host.retarget(descriptor: .shellProbe, routes: routes)
+        PageTestWait.onTimeout = { await Self.shellState(host) }
         #expect(await Self.reply { host.sendClaim(reply: $0) } == .success(["page": "cmux.shell.probe"]))
         try await checkNothingLeaks(provider: provider, host: host, leave: {
             _ = await Self.reply { host.resetShellPage(reply: $0) }
