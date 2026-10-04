@@ -148,7 +148,13 @@ try:
     print(f"launched pid {app.pid}", flush=True)
     if not wait("the tagged app comes up", lambda: os.path.exists(SOCKET) and (rpc("debug.surfaces") or {}).get("windows"), 90):
         sys.exit("FAIL the tagged app did not come up")
-    time.sleep(2)  # test harness: let the first workspace (cwd: the fixture) settle
+    time.sleep(2)  # test harness: let the window settle
+    # A workspace with a terminal in the fixture (its git root is the workspace root, so saves are allowed).
+    key("n", ["command"])
+    focus = wait("a terminal has the keyboard", lambda: (lambda f: f if "terminal" in json.dumps(f) else None)(rpc("debug.focus") or {}), 20)
+    expect("Cmd-N opens a workspace with a terminal", focus is not None, json.dumps(rpc("debug.focus"))[:300])
+    time.sleep(2)  # test harness: the shell reports its cwd
+    snapshot("workspace")
 
     # 1. Markdown: Open File..., the markdown page, an edit, Cmd-S.
     expect("Open File... opens README.md", open_file(MD))
